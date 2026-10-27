@@ -6,6 +6,11 @@ import { ASSET_PRESETS, Z_PRESETS, evaluate, sensitivity, LEVELS } from "./mosca
 import { buildPlan, PRIORITIES } from "./plan.js";
 import { buildCbom, checkCbom } from "./cbom.js";
 import { readiness, chainStatus, certIssues, buildMarkdown } from "./report.js";
+import { buildSession, validateSession, snapshotInventory, reviveInventory } from "./session.js";
+import { diffInventories } from "./diff.js";
+import { matchInclude, findIncludes, detect, mergeIncludes } from "./parsers.js";
+
+const APP_VERSION = "0.3.0";
 
 const KEY = "cbom-pqc-lab:v1";
 const $ = (s, r = document) => r.querySelector(s);
@@ -45,7 +50,7 @@ function sanitize(s) {
   const out = { ...d };
   if (s.theme === "light" || s.theme === "dark") out.theme = s.theme;
   if (VIEWS.includes(s.view)) out.view = s.view;
-  if (Array.isArray(s.sources)) out.sources = s.sources.filter((x) => x && str(x.name) && (str(x.text) || str(x.b64))).map((x) => ({ id: str(x.id) ? x.id : `s-${Math.random().toString(36).slice(2, 9)}`, name: x.name, ...(str(x.b64) ? { b64: x.b64 } : { text: x.text }), ...(x.sample ? { sample: true } : {}) }));
+  if (Array.isArray(s.sources)) out.sources = s.sources.filter((x) => x && str(x.name) && (str(x.text) || str(x.b64))).map((x) => ({ id: str(x.id) ? x.id : `s-${Math.random().toString(36).slice(2, 9)}`, name: x.name, ...(str(x.b64) ? { b64: x.b64 } : { text: x.text }), ...(x.sample ? { sample: true } : {}), ...(Array.isArray(x.includes) ? { includes: x.includes.filter((f) => f && str(f.name) && str(f.text)).map((f) => ({ name: f.name, text: f.text })) } : {}) }));
   out.z = num(s.z, 1, 50, d.z);
   out.zPreset = Z_PRESETS.find((p) => p.id === s.zPreset && p.z === out.z)?.id || null;
   if (Array.isArray(s.assets)) out.assets = s.assets.filter((a) => a && str(a.id)).map((a) => ({
@@ -55,6 +60,7 @@ function sanitize(s) {
   if (s.statuses && typeof s.statuses === "object" && !Array.isArray(s.statuses)) out.statuses = Object.fromEntries(Object.entries(s.statuses).filter(([, v]) => ["pendiente", "en-curso", "migrado", "aceptado"].includes(v)));
   if (s.filter === "all" || Object.keys(CATEGORIES).includes(s.filter)) out.filter = s.filter;
   if (str(s.query)) out.query = s.query;
+  if (s.baseline && typeof s.baseline === "object" && str(s.baseline.label) && validateSession({ schema: "cbom-pqc-lab/session", version: 1, sources: [], inventory: s.baseline.inventory }).ok) out.baseline = { label: s.baseline.label, inventory: s.baseline.inventory };
   return out;
 }
 function load() {
@@ -81,7 +87,7 @@ function bytesToB64(u) {
 function recompute() {
   parsed = state.sources.map((s) => {
     let p;
-    try { p = parseSource(s.b64 ? { name: s.name, bytes: b64ToBytes(s.b64) } : { name: s.name, text: s.text }); }
+    try { p = parseSource(s.b64 ? { name: s.name, bytes: b64ToBytes(s.b64) } : { name: s.name, text: s.text, includes: s.includes }); }
     catch { p = { source: s.name, type: "unknown", typeLabel: TYPES.unknown, protocols: [], algs: [], certs: [], warnings: ["Datos guardados ilegibles: vuelve a cargar el fichero."] }; }
     return { ...s, parsed: p };
   });
@@ -205,7 +211,7 @@ function renderInventory() {
           <span class="name wide">${esc(s.name)}${s.sample ? `<span class="sub">Dato de ejemplo · entidad ficticia</span>` : ""}</span>
           <span><span class="lbl">Tipo</span>${esc(s.parsed.typeLabel)}</span>
           <span class="tabular"><span class="lbl">Hallazgos</span>${s.parsed.algs.length + s.parsed.certs.length * 2}</span>
-          <span class="muted small wide">${s.parsed.warnings.map(esc).join("<br>") || "—"}</span>
+          <span class="muted small wide">${s.parsed.warnings.map(esc).join("<br>") || "—"}${s.parsed.missingIncludes?.length ? `<br><button class="btn btn-secondary btn-sm inc-btn" data-act="load-includes" data-id="${esc(s.id)}">${ic("file-symlink", "ico ico-nudge")}Cargar ficheros incluidos</button>` : ""}</span>
           <button class="btn btn-tertiary btn-sm btn-icon" data-act="rm" data-id="${esc(s.id)}" aria-label="Quitar ${esc(s.name)}">${ic("x")}</button>
         </div>`).join("")}
       </div>` : `<div class="list empty">${ic("inbox")}<p><b>Aún no hay fuentes.</b></p><p class="small" style="margin-top:4px">Carga el ejemplo del banco ficticio para ver la herramienta en marcha, o arrastra aquí tus ficheros. Nada sale de este navegador.</p></div>`}
@@ -243,7 +249,8 @@ function renderInventory() {
           const e = c.ext || {};
           const facts = [e.ca === true ? `CA${e.pathLen != null ? ` · pathLen ${e.pathLen}` : ""}` : e.ca === false ? "Entidad final" : null,
             e.san?.length ? `SAN: ${e.san.slice(0, 2).join(", ")}${e.san.length > 2 ? ` +${e.san.length - 2}` : ""}` : null,
-            e.keyUsage?.length ? `Uso: ${e.keyUsage.join(", ")}` : null, e.extKeyUsage?.length ? `EKU: ${e.extKeyUsage.join(", ")}` : null].filter(Boolean);
+            e.keyUsage?.length ? `Uso: ${e.keyUsage.join(", ")}` : null, e.extKeyUsage?.length ? `EKU: ${e.extKeyUsage.join(", ")}` : null,
+            c.components ? `Compuesto: ${c.components.join(" + ")}` : null, c.pubBytes && !c.components ? `Clave pública de ${c.pubBytes} bytes` : null, c.imported ? "Importado de CBOM" : null].filter(Boolean);
           return `<div class="list-row cols-cert">
             <span class="name wide">${esc(c.cn)}<span class="sub">${esc(chain?.label || "")}</span>${facts.length ? `<span class="sub facts">${facts.map(esc).join(" · ")}</span>` : ""}${issues.length ? `<span class="sub warn">${ic("triangle-alert")}${issues.map(esc).join(" · ")}</span>` : ""}</span>
             <span><span class="lbl">Clave</span>${esc(key?.name || c.keyAlg)}</span>
@@ -307,7 +314,85 @@ async function readFiles(files) {
     if (isDer) out.push({ name: f.name, b64: bytesToB64(buf) });
     else out.push({ name: f.name, text: new TextDecoder().decode(buf) });
   }
-  if (out.length) { addSources(out); toast(`${out.length} fuente${out.length > 1 ? "s" : ""} analizada${out.length > 1 ? "s" : ""} en local.`); }
+  const sessions = out.filter((f) => f.text && /"schema"\s*:\s*"cbom-pqc-lab\/session"/.test(f.text.slice(0, 400)));
+  if (sessions.length) { openSessionText(sessions[0].text, sessions[0].name); return; }
+  const merged = mergeIncludes(out);
+  if (merged.list.length) {
+    addSources(merged.list);
+    toast(merged.used.length ? `${merged.list.length} fuente${merged.list.length > 1 ? "s" : ""} analizada${merged.list.length > 1 ? "s" : ""}; ${merged.used.length} fichero${merged.used.length > 1 ? "s" : ""} incluido${merged.used.length > 1 ? "s" : ""} fusionado${merged.used.length > 1 ? "s" : ""}.` : `${merged.list.length} fuente${merged.list.length > 1 ? "s" : ""} analizada${merged.list.length > 1 ? "s" : ""} en local.`);
+  }
+}
+
+let includeTarget = null;
+async function loadIncludes(files) {
+  const src = state.sources.find((s) => s.id === includeTarget);
+  if (!src) return;
+  const read = [];
+  for (const f of files) if (f.size <= 5 * 1024 * 1024) read.push({ name: f.name, text: await f.text() });
+  const type = detect(src.name, src.text || "", false);
+  const pats = findIncludes(type, src.text || "");
+  const prev = src.includes || [];
+  const hits = read.filter((f) => pats.some((pt) => matchInclude(pt, [f]).length));
+  const skipped = read.length - hits.length;
+  src.includes = [...prev.filter((p) => !hits.some((h) => h.name === p.name)), ...hits];
+  recompute(); save(); renderInventory();
+  toast(hits.length ? `${hits.length} fichero${hits.length > 1 ? "s" : ""} fusionado${hits.length > 1 ? "s" : ""} en ${src.name}${skipped ? `; ${skipped} sin coincidencia con ningún include` : ""}.` : "Ningún fichero coincide por nombre con los include declarados.", hits.length ? "check" : "circle-alert");
+}
+
+/* ---------- Sesión ---------- */
+function download(name, text, type) {
+  const blob = new Blob([text], { type });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function openSessionText(text, name) {
+  const v = validateSession(text);
+  if (!v.ok) { showSessionErrors(v.errors, name); return false; }
+  const d = v.session;
+  const next = sanitize({ ...state, sources: d.sources, z: d.mosca?.z ?? state.z, zPreset: d.mosca?.zPreset, assets: d.mosca?.assets ?? defaults().assets, statuses: d.plan?.statuses || {}, baseline: state.baseline });
+  state = next;
+  sessionErrors = null;
+  recompute(); save();
+  show("inventario");
+  toast(`Sesión ${name} abierta: ${state.sources.length} fuentes.`, "folder-open");
+  return true;
+}
+let sessionErrors = null;
+function showSessionErrors(errs, name) {
+  sessionErrors = { name, errs };
+  if (state.view !== "exportar") show("exportar"); else renderExport();
+  toast("No se pudo abrir la sesión: revisa los errores.", "circle-alert");
+}
+async function loadBaseline(file) {
+  const text = await file.text();
+  let data;
+  try { data = JSON.parse(text); } catch { compareError = `${file.name}: no es JSON válido.`; return renderExport(); }
+  let snap = null;
+  if (data?.bomFormat === "CycloneDX") {
+    try {
+      const p = parseSource({ name: file.name, text });
+      snap = snapshotInventory(buildInventory([{ name: file.name, parsed: p }]));
+    } catch (e) { compareError = `${file.name}: ${e.message}`; return renderExport(); }
+  } else {
+    const v = validateSession(data);
+    if (!v.ok) { compareError = `${file.name}: ${v.errors.join(" ")}`; return renderExport(); }
+    snap = v.session.inventory || (() => {
+      const ps = v.session.sources.map((s) => ({ name: s.name, parsed: parseSource(s.b64 ? { name: s.name, bytes: b64ToBytes(s.b64) } : { name: s.name, text: s.text, includes: s.includes }) }));
+      return snapshotInventory(buildInventory(ps));
+    })();
+  }
+  compareError = null;
+  state.baseline = { label: file.name, inventory: snap };
+  save(); renderExport();
+  toast(`Comparando con ${file.name}.`, "git-compare");
+}
+let compareError = null;
+function currentDiff() {
+  if (!state.baseline) return null;
+  return diffInventories(reviveInventory(state.baseline.inventory), reviveInventory(snapshotInventory(inv)));
 }
 
 function bindDrop() {
@@ -483,6 +568,45 @@ function renderPlan() {
 }
 
 /* ---------- Exportar ---------- */
+function sessionPanel() {
+  return `<div class="section">
+      <h2>Sesión</h2>
+      <div class="panel pad">
+        <p class="muted">Guarda en un único JSON las fuentes, el inventario analizado, los activos de Mosca y los estados del plan (esquema <code>cbom-pqc-lab/session</code> v1). Ábrelo después para continuar o para compararlo.</p>
+        <div class="row-wrap" style="margin-top:14px">
+          <button class="btn btn-primary" data-act="session-save">${ic("save", "ico ico-drop")}Guardar sesión</button>
+          <button class="btn btn-secondary" data-act="session-open">${ic("folder-open", "ico ico-lift")}Abrir sesión</button>
+        </div>
+        ${sessionErrors ? `<div class="errs-box" role="alert"><p class="small"><b>No se pudo abrir ${esc(sessionErrors.name)}</b></p><ul class="errs small">${sessionErrors.errs.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>` : ""}
+      </div>
+    </div>`;
+}
+const signed = (n) => (n > 0 ? `+${n}` : n === 0 ? "0" : String(n));
+function comparePanel() {
+  const d = currentDiff();
+  const tone = (n, goodWhenUp) => (n === 0 || n === null ? "neutral" : (n > 0) === goodWhenUp ? "good" : "bad");
+  const chips = (arr, cls) => arr.map((a) => `<li class="diff-item ${cls}"><span class="diff-mark" aria-hidden="true">${cls === "add" ? "+" : cls === "rm" ? "−" : "~"}</span><span class="name">${esc(a.name)}</span>${a.category ? badge(a.category) : `${badge(a.from)}${ic("arrow-right")}${badge(a.to)}`}</li>`).join("");
+  return `<div class="section" id="compare">
+      <div class="section-head"><h2>Comparar CBOM</h2>${d ? `<button class="btn btn-tertiary btn-sm" data-act="compare-clear">${ic("x")}Quitar comparación</button>` : ""}</div>
+      <div class="panel pad">
+        <p class="muted">Compara el inventario actual con una sesión guardada o un CBOM CycloneDX anterior: algoritmos añadidos, retirados y reclasificados, y variación de vulnerables y del indicador de preparación.</p>
+        <div class="row-wrap" style="margin-top:14px"><button class="btn btn-secondary" data-act="compare-pick">${ic("git-compare", "ico ico-pop")}${d ? "Cambiar referencia" : "Elegir sesión o CBOM anterior"}</button></div>
+        ${compareError ? `<p class="check bad small" role="alert" style="margin-top:12px">${ic("circle-x")}${esc(compareError)}</p>` : ""}
+        ${d ? `<p class="small muted" style="margin-top:14px">Referencia: <b style="color:var(--text)">${esc(state.baseline.label)}</b> → inventario actual</p>
+        <div class="kv diff-kv">
+          <div class="tone-${tone(d.vulnerable.delta, false)}"><b class="tabular">${signed(d.vulnerable.delta)}</b><span>Vulnerables (${d.vulnerable.prev} → ${d.vulnerable.cur})</span></div>
+          <div class="tone-${tone(d.risk.delta, false)}"><b class="tabular">${signed(d.risk.delta)}</b><span>Vulnerables u obsoletos (${d.risk.prev} → ${d.risk.cur})</span></div>
+          <div class="tone-${tone(d.readiness.delta, true)}"><b class="tabular">${d.readiness.delta === null ? "—" : signed(d.readiness.delta)}</b><span>Preparación PQC (${d.readiness.prev ?? "—"} → ${d.readiness.cur ?? "—"})</span></div>
+          <div><b class="tabular">${d.added.length}/${d.removed.length}/${d.changed.length}</b><span>Añadidos / retirados / reclasificados</span></div>
+        </div>
+        ${d.readiness.prev !== null && d.readiness.cur !== null ? `<div class="diff-bars" aria-hidden="true"><span class="bar"><span style="transform:scaleX(${d.readiness.prev / 100})"></span></span><span class="bar now"><span style="transform:scaleX(${d.readiness.cur / 100})"></span></span></div><div class="tl-key"><span><i class="k-prev"></i>Referencia</span><span><i style="background:var(--accent)"></i>Actual</span></div>` : ""}
+        ${d.added.length + d.removed.length + d.changed.length ? `<ul class="diff-list" aria-label="Cambios de algoritmos">${chips(d.added, "add")}${chips(d.removed, "rm")}${chips(d.changed, "chg")}</ul>` : `<p class="muted small" style="margin-top:12px">Sin cambios de algoritmos.</p>`}
+        ${d.certs.added.length || d.certs.removed.length || d.protocols.added.length || d.protocols.removed.length ? `<p class="small muted" style="margin-top:12px">${d.certs.added.length ? `Certificados nuevos: ${esc(d.certs.added.join(", "))}. ` : ""}${d.certs.removed.length ? `Certificados retirados: ${esc(d.certs.removed.join(", "))}. ` : ""}${d.protocols.added.length ? `Protocolos nuevos: ${esc(d.protocols.added.join(", "))}. ` : ""}${d.protocols.removed.length ? `Protocolos retirados: ${esc(d.protocols.removed.join(", "))}.` : ""}</p>` : ""}
+        <p class="note">${ic("info")}<span>La comparación se incluye en el informe descargado o impreso.</span></p>` : ""}
+      </div>
+    </div>`;
+}
+
 let lastBom = null;
 function renderExport() {
   const el = $("#view-exportar");
@@ -517,6 +641,8 @@ function renderExport() {
       ${errs.length ? `<ul class="errs small" role="alert">${errs.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>` : `<p class="muted small" style="margin-bottom:10px">Comprobación local de cabecera, identificadores y referencias. La validación completa contra el esquema oficial CycloneDX 1.6 se ejecuta con <code>npm test</code>.</p>`}
       <pre class="json" tabindex="0" aria-label="Vista previa del JSON">${esc(json)}</pre>
     </div>
+    ${sessionPanel()}
+    ${comparePanel()}
     <div class="section">
       <h2>Informe</h2>
       <div class="panel pad">
@@ -609,7 +735,7 @@ document.addEventListener("click", async (e) => {
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     toast("CBOM descargado.", "download");
   } else if (act === "report-md" || act === "report-print") {
-    const md = buildMarkdown({ inv, plan: plan(), assets: assetsResolved(), z: state.z, statuses: state.statuses });
+    const md = buildMarkdown({ inv, plan: plan(), assets: assetsResolved(), z: state.z, statuses: state.statuses, diff: currentDiff(), diffLabel: state.baseline?.label });
     if (act === "report-md") {
       const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
       const a = document.createElement("a");
@@ -622,7 +748,14 @@ document.addEventListener("click", async (e) => {
       $("#print-report").innerHTML = mdToHtml(md);
       window.print();
     }
-  } else if (act === "copy") {
+  } else if (act === "load-includes") { includeTarget = b.dataset.id; $("#file-inc").click(); }
+  else if (act === "session-save") {
+    download(`sesion-pqc-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(buildSession({ state, inv, appVersion: APP_VERSION }), null, 2), "application/json");
+    toast("Sesión guardada.", "save");
+  } else if (act === "session-open") $("#file-session").click();
+  else if (act === "compare-pick") $("#file-compare").click();
+  else if (act === "compare-clear") { delete state.baseline; compareError = null; save(); renderExport(); toast("Comparación quitada."); }
+  else if (act === "copy") {
     try { await navigator.clipboard.writeText(JSON.stringify(lastBom, null, 2)); toast("JSON copiado al portapapeles."); }
     catch { toast("El navegador no permite copiar aquí. Usa Descargar.", "circle-alert"); }
   } else if (act === "reset") {
@@ -684,6 +817,9 @@ document.addEventListener("change", (e) => {
 });
 
 $("#file").addEventListener("change", (e) => { readFiles([...e.target.files]); e.target.value = ""; });
+$("#file-inc").addEventListener("change", (e) => { loadIncludes([...e.target.files]); e.target.value = ""; });
+$("#file-session").addEventListener("change", async (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) openSessionText(await f.text(), f.name); });
+$("#file-compare").addEventListener("change", (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) loadBaseline(f); });
 document.addEventListener("paste", (e) => {
   if (state.view !== "inventario" || e.target.closest("input, textarea")) return;
   const text = e.clipboardData?.getData("text");

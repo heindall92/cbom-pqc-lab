@@ -2,6 +2,7 @@
 import { CATEGORIES, ROLES } from "./classify.js";
 import { evaluate, LEVELS } from "./mosca.js";
 import { PRIORITIES } from "./plan.js";
+import { diffMarkdown } from "./diff.js";
 
 const DAY = 864e5;
 const cnOf = (dn) => (String(dn).match(/CN=([^,]+)/) || [])[1] || dn;
@@ -45,6 +46,7 @@ export function certIssues(c, now = Date.now()) {
   if (/^(SHA1|MD5)with/i.test(c.sigAlg)) out.push(`Firmado con ${c.sigAlg}`);
   if (c.keyFamily === "RSA" && c.keySize && c.keySize < 2048) out.push(`RSA de ${c.keySize} bits`);
   if (c.ext && c.ext.ca !== true && !c.ext.san.length) out.push("Sin SubjectAltName");
+  if (c.provisional) out.push("OID provisional (borrador IETF)");
   return out;
 }
 
@@ -53,13 +55,13 @@ const row = (cells) => `| ${cells.map(mdEsc).join(" | ")} |`;
 const table = (head, rows) => (rows.length ? [row(head), row(head.map(() => "---")), ...rows.map(row)].join("\n") : "_Sin datos._");
 const STATUS = { pendiente: "Pendiente", "en-curso": "En curso", migrado: "Migrado", aceptado: "Riesgo aceptado" };
 
-export function buildMarkdown({ inv, plan, assets, z, statuses = {}, now = new Date() }) {
+export function buildMarkdown({ inv, plan, assets, z, statuses = {}, now = new Date(), diff = null, diffLabel }) {
   const r = readiness(inv, now.getTime());
   const ch = chainStatus(inv.certificates);
   const year = now.getFullYear();
   const L = [];
   L.push("# Informe de inventario criptográfico y transición PQC", "");
-  L.push(`Generado el ${now.toISOString().slice(0, 10)} con CBOM & PQC Lab para Banca v0.2. Análisis local de ficheros y salidas de herramientas; no se han sondeado endpoints en vivo.`, "");
+  L.push(`Generado el ${now.toISOString().slice(0, 10)} con CBOM & PQC Lab para Banca v0.3. Análisis local de ficheros y salidas de herramientas; no se han sondeado endpoints en vivo.`, "");
   L.push("## Resumen", "");
   L.push(`- Algoritmos: ${inv.algorithms.length} · Certificados: ${inv.certificates.length} · Configuraciones de protocolo: ${inv.protocols.length}`);
   for (const k of Object.keys(CATEGORIES)) { const n = inv.algorithms.filter((a) => a.category === k).length; if (n) L.push(`- ${CATEGORIES[k].label}: ${n}`); }
@@ -75,8 +77,10 @@ export function buildMarkdown({ inv, plan, assets, z, statuses = {}, now = new D
   L.push(table(["Activo", "X", "Y", "X + Y", "Resultado"], assets.map((a) => { const e = evaluate(a.x, a.y, z); return [a.name, e.X, e.Y, e.sum, `${LEVELS[e.level].short} (${e.margin > 0 ? `exceso ${e.margin}` : `holgura ${-e.margin}`} años)`]; })), "");
   L.push("## Plan de transición", "");
   L.push(table(["Prioridad", "Algoritmo", "Destino", "Activo más expuesto", "Estado"], plan.map((i) => [PRIORITIES[i.prio].label, i.alg.name, `${i.std}: ${i.to}`, i.worst ? i.worst.name : "—", STATUS[statuses[i.id]] || "Pendiente"])), "");
+  if (diff) L.push(diffMarkdown(diff, diffLabel));
   L.push("## Limitaciones", "");
-  L.push("- No se verifican firmas de certificados ni se siguen `include` de configuración.");
+  L.push("- No se verifican firmas de certificados. Los `include` solo se fusionan si se cargan los ficheros referidos (por nombre).");
+  L.push("- Las firmas compuestas usan OID de borrador IETF (provisionales) y pueden cambiar al publicarse el RFC.");
   L.push("- Los selectores genéricos de OpenSSL (p. ej. `HIGH`) no se expanden: su resultado depende de la versión instalada.");
   L.push("- La prioridad del plan es orientativa y no constituye un dictamen de cumplimiento normativo.");
   return L.join("\n") + "\n";

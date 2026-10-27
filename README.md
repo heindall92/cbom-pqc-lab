@@ -64,6 +64,10 @@ npm run test:e2e               # navegador headless: escritorio y 390 px, claro 
 - `tests/unit.mjs`: clasificación, analizadores con entradas malformadas (PEM basura, DER aleatorio, ficheros vacíos, `include`, comentarios, `Match`, selectores genéricos), extensiones X.509, indicador y Mosca. Incluye las regresiones de los fallos corregidos en v0.2.
 - `tests/validate-cbom.mjs`: genera el CBOM de las muestras y lo valida con el esquema oficial CycloneDX 1.6 (`tests/schema/`). Admite ficheros extra: `node tests/validate-cbom.mjs cbom.json`.
 - `tests/e2e.mjs`: todas las pestañas, soltar/elegir/pegar ficheros, casos límite de Mosca, alta y baja de activos, persistencia y `localStorage` corrupto, exportación, informe, teclado, ARIA, errores de consola y desbordamiento horizontal. Con `SHOTS=carpeta` guarda capturas.
+- `tests/unit-v03.mjs`: OID PQC y compuestos, certificados de ejemplo, SAN, `include` (glob, ausentes, recursión), ida y vuelta de CBOM con certificados y protocolos, validación de sesión y comparación.
+- `tests/e2e-v03.mjs`: certificados PQC/compuestos en pantalla, guardar y abrir sesión (con errores), comparar con sesión o CBOM, informe con comparación, `include` en el mismo paso y posterior, importación completa de CBOM, móvil y tema oscuro.
+
+Para regenerar los certificados de ejemplo (OpenSSL 3.5 o superior): `tools/gen-certs.sh && npm run samples`.
 
 ## Estructura
 
@@ -84,13 +88,29 @@ tools/            regeneración de js/samples.js
 ## Limitaciones conocidas (v0.2)
 
 - Analiza texto y ficheros, no endpoints en vivo.
-- No sigue `include` de nginx ni `Include` de sshd (avisa y pide cargar esos ficheros). No expande selectores genéricos de OpenSSL como `HIGH:!aNULL`: avisa y propone pegar la salida de `openssl ciphers -v`, que sí se analiza.
-- La cadena de certificados se reconstruye por nombre e identificadores de clave entre los ficheros cargados; **no se verifican firmas** ni revocación. Los certificados compuestos PQC aún no se reconocen.
+- `include` de nginx e `Include` de sshd se fusionan solo si cargas los ficheros referidos (se emparejan por nombre de fichero, con `*` y `?`; no se resuelven rutas reales). Los que falten siguen avisados. No expande selectores genéricos de OpenSSL como `HIGH:!aNULL`: avisa y propone pegar la salida de `openssl ciphers -v`, que sí se analiza.
+- La cadena de certificados se reconstruye por nombre e identificadores de clave entre los ficheros cargados; **no se verifican firmas** ni revocación. Las firmas compuestas ML-DSA + clásica usan OID del borrador draft-ietf-lamps-pq-composite-sigs-19 y se marcan como provisionales; los KEM compuestos aún no se reconocen.
 - El indicador de preparación PQC es una ponderación propia y visible de esta herramienta, no una métrica estándar.
-- Al importar un CBOM se reclasifican sus algoritmos; certificados y protocolos no se reconstruyen.
+- Al importar un CBOM se reconstruyen algoritmos, certificados y protocolos, pero no las extensiones X.509 (no forman parte del CBOM).
+- La comparación empareja algoritmos por nombre y certificados por CN y fecha de caducidad.
 - Los valores de X, Y y Z son ilustrativos; la prioridad del plan es orientativa y no constituye un dictamen de cumplimiento normativo.
 
 ## Cambios
+
+### v0.3
+
+Añadido:
+- Certificados PQC y compuestos: ML-DSA-44/65/87 y HashML-DSA, las 12 variantes de SLH-DSA (y sus variantes con prehash), claves públicas ML-KEM-512/768/1024 (OID de NIST CSOR, RFC 9881) y las 18 firmas compuestas ML-DSA + RSA/ECDSA/EdDSA de draft-ietf-lamps-pq-composite-sigs-19 (OID `1.3.6.1.5.5.7.6.37`-`54`), estas con la marca «OID provisional (borrador IETF)».
+- Muestras nuevas generadas con OpenSSL 3.5 (`tools/gen-certs.sh`): SLH-DSA-SHA2-128s, clave ML-KEM-768 certificada con ML-DSA-65 y un certificado compuesto ML-DSA-65 + ECDSA P-256 de ejemplo (firma de relleno, no verificable).
+- Sesión completa en JSON (esquema `cbom-pqc-lab/session` v1): fuentes, inventario analizado, activos de Mosca y estados del plan, con validación y mensajes de error claros. También se abre al soltarla en Inventario.
+- Comparación de CBOM: inventario actual frente a una sesión o un CBOM anterior, con algoritmos añadidos, retirados y reclasificados, variación de vulnerables y del indicador de preparación, comparación visual e inclusión en el informe.
+- `include` de nginx e `Include` de sshd: los ficheros referidos que se cargan en el mismo paso se fusionan en la fuente principal; para los que falten aparece «Cargar ficheros incluidos».
+- La importación de un CBOM restaura también certificados y protocolos.
+
+Corregido:
+- Los certificados de ejemplo buenos llevan SubjectAltName; solo `intranet-legada-defectuoso.pem` (SHA-1, sin SAN) dispara los avisos a propósito.
+- Nombres exportados que no se reconocían al reimportar (`ECDH P-256`, `FFDHE-2048`, `AES-256-CTR`, `RSA (transporte de clave)`, `ECDSA P-256`).
+- SLH-DSA se mostraba sin su variante.
 
 ### v0.2
 

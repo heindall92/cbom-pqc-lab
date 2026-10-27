@@ -31,7 +31,11 @@ const RULES = [
   // PQC puros
   [/^(ml-?kem-?|mlkem)(512|768|1024)$/i, { name: (m) => `ML-KEM-${m[2]}`, cat: "pqc", role: "kex", primitive: "kem", param: (m) => m[2], nistQ: (m) => ({ 512: 1, 768: 3, 1024: 5 })[m[2]], note: "FIPS 203." }],
   [/^(ml-?dsa-?|mldsa)(44|65|87)$/i, { name: (m) => `ML-DSA-${m[2]}`, cat: "pqc", role: "sig", primitive: "signature", param: (m) => m[2], nistQ: (m) => ({ 44: 2, 65: 3, 87: 5 })[m[2]], note: "FIPS 204." }],
-  [/^slh-?dsa/i, { name: "SLH-DSA", cat: "pqc", role: "sig", primitive: "signature", nistQ: 1, note: "FIPS 205 (hash-based)." }],
+  [/^hashml-?dsa-?(44|65|87)(-sha512)?$/i, { name: (m) => `HashML-DSA-${m[1]}-SHA512`, cat: "pqc", role: "sig", primitive: "signature", param: (m) => m[1], nistQ: (m) => ({ 44: 2, 65: 3, 87: 5 })[m[1]], note: "FIPS 204, variante con prehash SHA-512." }],
+  [/^(hash)?slh-?dsa-?(sha2|shake)-?(128|192|256)([sf])(-\w+)?$/i, { name: (m) => `${m[1] ? "HashSLH-DSA" : "SLH-DSA"}-${m[2].toUpperCase()}-${m[3]}${m[4].toLowerCase()}${m[5] ? m[5].toUpperCase() : ""}`, cat: "pqc", role: "sig", primitive: "signature", param: (m) => `${m[2].toUpperCase()}-${m[3]}${m[4].toLowerCase()}`, nistQ: (m) => ({ 128: 1, 192: 3, 256: 5 })[m[3]], note: (m) => `FIPS 205 (basada en hash), variante ${m[4].toLowerCase() === "s" ? "pequeña (firmas cortas, firma lenta)" : "rápida (firmas más grandes)"}.` }],
+  [/^slh-?dsa$/i, { name: "SLH-DSA", cat: "pqc", role: "sig", primitive: "signature", nistQ: 1, note: "FIPS 205 (basada en hash)." }],
+  // Firmas compuestas ML-DSA + tradicional (borrador IETF lamps)
+  [/^(?:id-)?mldsa(44|65|87)-(rsa\d{4}-(?:pss|pkcs15)|ecdsa-(?:p\d{3}|brainpoolp\d{3}r1)|ed25519|ed448)-(sha\d{3}|shake256)$/i, { name: (m) => `MLDSA${m[1]}-${m[2].replace(/^rsa/i, "RSA").replace(/pss$/i, "PSS").replace(/pkcs15$/i, "PKCS15").replace(/^ecdsa-p/i, "ECDSA-P").replace(/^ecdsa-brainpoolp(\d+)r1/i, "ECDSA-brainpoolP$1r1").replace(/^ed/i, "Ed")}-${m[3].toUpperCase()}`, cat: "hybrid", role: "sig", primitive: "signature", param: (m) => m[1], nistQ: (m) => ({ 44: 2, 65: 3, 87: 5 })[m[1]], note: "Firma compuesta ML-DSA + clásica (draft-ietf-lamps-pq-composite-sigs). OID provisional de borrador: confirmar al publicarse el RFC." }],
   // Intercambio de claves clásico
   [/^diffie-hellman-group1-sha1$|^diffie-hellman-group-exchange-sha1$/i, { name: (m) => m[0], cat: "legacy", role: "kex", primitive: "key-agree", note: "DH con SHA-1: débil ya hoy." }],
   [/^diffie-hellman-group(14|16|18)-sha(256|512)$/i, { name: (m) => m[0], cat: "vulnerable", role: "kex", primitive: "key-agree", note: "DH finito: roto por Shor." }],
@@ -40,23 +44,23 @@ const RULES = [
   [/^ecdh-sha2-nistp(256|384|521)$/i, { name: (m) => m[0], cat: "vulnerable", role: "kex", primitive: "key-agree", curve: (m) => `P-${m[1]}`, note: "ECDH NIST: roto por Shor (HNDL)." }],
   [/^x25519$/i, { name: "X25519", cat: "vulnerable", role: "kex", primitive: "key-agree", curve: "Curve25519", classical: 128, note: "ECDH clásico: tráfico grabado hoy descifrable con un CRQC (HNDL)." }],
   [/^x448$/i, { name: "X448", cat: "vulnerable", role: "kex", primitive: "key-agree", curve: "Curve448", classical: 224, note: "ECDH clásico." }],
-  [/^(secp256r1|prime256v1|p-256)$/i, { name: "ECDH P-256", cat: "vulnerable", role: "kex", primitive: "key-agree", curve: "P-256", classical: 128, note: "ECDH clásico (HNDL)." }],
-  [/^(secp384r1|p-384)$/i, { name: "ECDH P-384", cat: "vulnerable", role: "kex", primitive: "key-agree", curve: "P-384", classical: 192, note: "ECDH clásico (HNDL)." }],
-  [/^(secp521r1|p-521)$/i, { name: "ECDH P-521", cat: "vulnerable", role: "kex", primitive: "key-agree", curve: "P-521", classical: 256, note: "ECDH clásico (HNDL)." }],
-  [/^ffdhe(2048|3072|4096|6144|8192)$/i, { name: (m) => `FFDHE-${m[1]}`, cat: "vulnerable", role: "kex", primitive: "key-agree", param: (m) => m[1], note: "DH finito (HNDL)." }],
+  [/^(secp256r1|prime256v1|p-256|ecdh p-256)$/i, { name: "ECDH P-256", cat: "vulnerable", role: "kex", primitive: "key-agree", curve: "P-256", classical: 128, note: "ECDH clásico (HNDL)." }],
+  [/^(secp384r1|p-384|ecdh p-384)$/i, { name: "ECDH P-384", cat: "vulnerable", role: "kex", primitive: "key-agree", curve: "P-384", classical: 192, note: "ECDH clásico (HNDL)." }],
+  [/^(secp521r1|p-521|ecdh p-521)$/i, { name: "ECDH P-521", cat: "vulnerable", role: "kex", primitive: "key-agree", curve: "P-521", classical: 256, note: "ECDH clásico (HNDL)." }],
+  [/^ffdhe-?(2048|3072|4096|6144|8192)$/i, { name: (m) => `FFDHE-${m[1]}`, cat: "vulnerable", role: "kex", primitive: "key-agree", param: (m) => m[1], note: "DH finito (HNDL)." }],
   [/^(ecdhe|eecdh)$/i, { name: "ECDHE", cat: "vulnerable", role: "kex", primitive: "key-agree", note: "ECDHE clásico; el grupo concreto depende de la configuración (HNDL)." }],
   [/^(dhe|edh)$/i, { name: "DHE", cat: "vulnerable", role: "kex", primitive: "key-agree", note: "DH efímero clásico (HNDL)." }],
-  [/^rsa-kex$/i, { name: "RSA (transporte de clave)", cat: "vulnerable", role: "pke", primitive: "pke", padding: "pkcs1v15", note: "Sin secreto perfecto hacia adelante: una sola clave descifra todo el tráfico grabado." }],
+  [/^(rsa-kex|rsa \(transporte de clave\))$/i, { name: "RSA (transporte de clave)", cat: "vulnerable", role: "pke", primitive: "pke", padding: "pkcs1v15", note: "Sin secreto perfecto hacia adelante: una sola clave descifra todo el tráfico grabado." }],
   // Firmas / claves públicas
   [/^rsa-(\d{3,5})$/i, { name: (m) => `RSA-${m[1]}`, cat: (m) => (+m[1] < 2048 ? "legacy" : "vulnerable"), role: "sig", primitive: "signature", param: (m) => m[1], classical: (m) => ({ 1024: 80, 2048: 112, 3072: 128, 4096: 152 })[m[1]], note: "Clave RSA: rota por Shor." }],
-  [/^ecdsa-secp256k1$/i, { name: "ECDSA secp256k1", cat: "vulnerable", role: "sig", primitive: "signature", curve: "secp256k1", classical: 128, note: "Clave ECDSA: rota por Shor." }],
+  [/^ecdsa[- ]secp256k1$/i, { name: "ECDSA secp256k1", cat: "vulnerable", role: "sig", primitive: "signature", curve: "secp256k1", classical: 128, note: "Clave ECDSA: rota por Shor." }],
   [/^ecdsa_(secp256r1_sha256|secp384r1_sha384|secp521r1_sha512)$/i, { name: (m) => m[0].toLowerCase(), cat: "vulnerable", role: "sig", primitive: "signature", note: "Esquema de firma TLS 1.3 ECDSA." }],
   [/^rsa_pss_(rsae|pss)_sha(256|384|512)$/i, { name: (m) => m[0].toLowerCase(), cat: "vulnerable", role: "sig", primitive: "signature", padding: "other", note: "Esquema de firma TLS 1.3 RSA-PSS." }],
   [/^rsa_pkcs1_sha1$|^ecdsa_sha1$/i, { name: (m) => m[0].toLowerCase(), cat: "legacy", role: "sig", primitive: "signature", note: "Firma TLS con SHA-1: débil ya hoy." }],
   [/^rsa_pkcs1_sha(256|384|512)$/i, { name: (m) => m[0].toLowerCase(), cat: "vulnerable", role: "sig", primitive: "signature", note: "Esquema de firma TLS RSA PKCS#1 v1.5." }],
   [/^(sha1withrsaencryption)$/i, { name: "SHA1withRSA", cat: "legacy", role: "sig", primitive: "signature", note: "Firma con SHA-1: débil ya hoy." }],
   [/^sha(256|384|512)withrsaencryption$/i, { name: (m) => `SHA${m[1]}withRSA`, cat: "vulnerable", role: "sig", primitive: "signature", note: "Firma RSA PKCS#1 v1.5." }],
-  [/^ecdsa-(p-\d{3})$/i, { name: (m) => `ECDSA ${m[1].toUpperCase()}`, cat: "vulnerable", role: "sig", primitive: "signature", curve: (m) => m[1].toUpperCase(), classical: (m) => ({ "P-256": 128, "P-384": 192, "P-521": 256 })[m[1].toUpperCase()], note: "Clave ECDSA: rota por Shor." }],
+  [/^ecdsa[- ](p-\d{3})$/i, { name: (m) => `ECDSA ${m[1].toUpperCase()}`, cat: "vulnerable", role: "sig", primitive: "signature", curve: (m) => m[1].toUpperCase(), classical: (m) => ({ "P-256": 128, "P-384": 192, "P-521": 256 })[m[1].toUpperCase()], note: "Clave ECDSA: rota por Shor." }],
   [/^(sha1withrsa|md5withrsa|ssh-rsa|ssh-dss|dsa)$/i, { name: (m) => m[0], cat: "legacy", role: "sig", primitive: "signature", note: "Firma con SHA-1/MD5 o DSA: débil ya hoy." }],
   [/^sha(256|384|512)withrsa$/i, { name: (m) => `SHA${m[1]}withRSA`, cat: "vulnerable", role: "sig", primitive: "signature", note: "Firma RSA PKCS#1 v1.5." }],
   [/^sha(256|384|512)withecdsa$/i, { name: (m) => `SHA${m[1]}withECDSA`, cat: "vulnerable", role: "sig", primitive: "signature", note: "Firma ECDSA." }],
@@ -72,7 +76,7 @@ const RULES = [
   [/^(aes-?128-?gcm|aes128-gcm(@openssh\.com)?)$/i, { name: "AES-128-GCM", cat: "symmetric", role: "sym", primitive: "ae", mode: "gcm", param: "128", classical: 128, nistQ: 1, note: "Aceptable; para datos de vida larga preferir AES-256." }],
   [/^aes-?(128|256)-?ccm$/i, { name: (m) => `AES-${m[1]}-CCM`, cat: "symmetric", role: "sym", primitive: "ae", mode: "ccm", param: (m) => m[1], note: "AEAD." }],
   [/^aes-?gcm$/i, { name: "AES-GCM", cat: "symmetric", role: "sym", primitive: "ae", mode: "gcm", note: "Tamaño de clave según la suite negociada." }],
-  [/^(aes(128|192|256)-ctr)$/i, { name: (m) => `AES-${m[2]}-CTR`, cat: "symmetric", role: "sym", primitive: "block-cipher", mode: "ctr", param: (m) => m[2], note: "Requiere MAC separado (EtM)." }],
+  [/^(aes-?(128|192|256)-ctr)$/i, { name: (m) => `AES-${m[2]}-CTR`, cat: "symmetric", role: "sym", primitive: "block-cipher", mode: "ctr", param: (m) => m[2], note: "Requiere MAC separado (EtM)." }],
   [/^aes-?(128|256)-?cbc$/i, { name: (m) => `AES-${m[1]}-CBC`, cat: "symmetric", role: "sym", primitive: "block-cipher", mode: "cbc", param: (m) => m[1], note: "Seguro frente a cuántica, pero CBC en TLS tiene historial de ataques de padding: preferir AEAD." }],
   [/^(chacha20-poly1305(@openssh\.com)?|chacha20)$/i, { name: "ChaCha20-Poly1305", cat: "symmetric", role: "sym", primitive: "ae", param: "256", classical: 256, note: "AEAD de 256 bits." }],
   [/^aes-?(128|256)$/i, { name: (m) => `AES-${m[1]}`, cat: "symmetric", role: "sym", primitive: "block-cipher", param: (m) => m[1], note: "Modo no indicado en la fuente." }],
@@ -99,7 +103,7 @@ export function classify(raw) {
     return {
       name: v(d.name), category: v(d.cat), role: d.role, primitive: d.primitive,
       paramSet: v(d.param) || null, curve: v(d.curve) || null, mode: d.mode || null,
-      padding: d.padding || null, classical: v(d.classical) ?? null, nistQ: v(d.nistQ) ?? null, note: d.note,
+      padding: d.padding || null, classical: v(d.classical) ?? null, nistQ: v(d.nistQ) ?? null, note: v(d.note),
     };
   }
   return { name: s, category: "unknown", role: null, primitive: "unknown", note: "Algoritmo no reconocido: revisar manualmente." };

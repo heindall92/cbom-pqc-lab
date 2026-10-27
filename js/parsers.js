@@ -1,6 +1,6 @@
 // Analizadores de ficheros de configuración y salidas de herramientas. Todo se procesa en local.
 import { pemBlocks, parseCertificate } from "./x509.js";
-import { decomposeSuite } from "./classify.js";
+import { decomposeSuite, classify } from "./classify.js";
 
 export const TYPES = {
   cert: "Certificado X.509",
@@ -44,6 +44,65 @@ function splitCipherString(v) {
 }
 const GENERIC_WARN = (g) => `Selectores genéricos de OpenSSL (${uniq(g).slice(0, 6).join(", ")}): su expansión depende de la versión y del SECLEVEL y no se deduce aquí. Ejecuta openssl ciphers -v '<cadena>' en el servidor y pega la salida para listar las suites reales.`;
 
+// Directivas include: nginx "include ruta;" y sshd "Include ruta [ruta...]". Devuelve las rutas declaradas.
+export function findIncludes(type, text) {
+  const t = strip(text || "");
+  if (type === "nginx") return [...t.matchAll(/(?:^|[\s;{}])include\s+([^;]+);/g)].map((m) => unquote(m[1].trim()));
+  if (type === "sshd") return [...t.matchAll(/^\s*include(?:\s*=\s*|\s+)(.+?)\s*$/gim)].flatMap((m) => unquote(m[1]).split(/\s+/)).filter(Boolean);
+  return [];
+}
+const baseName = (p) => String(p).split(/[\\/]/).pop();
+const globRe = (g) => new RegExp(`^${baseName(g).replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`, "i");
+// Fichero(s) cargado(s) que corresponden a una ruta de include, por nombre de fichero (admite * y ?).
+export function matchInclude(pattern, files) {
+  const re = globRe(pattern);
+  return files.filter((f) => re.test(baseName(f.name)));
+}
+// Inserta el contenido de los includes encontrados entre "files" en el lugar de la directiva (hasta 3 niveles).
+export function resolveIncludes(type, text, files, depth = 0, seen = new Set()) {
+  const merged = [], missing = [];
+  if (!files?.length || !["nginx", "sshd"].includes(type)) return { text, merged, missing: findIncludes(type, text) };
+  const expand = (pattern) => {
+    const all = matchInclude(pattern, files);
+    if (!all.length) { missing.push(pattern); return null; }
+    const hits = all.filter((f) => !seen.has(f.name)); // ya fusionado por otro include: no se repite
+    return hits.map((f) => {
+      seen.add(f.name); merged.push(f.name);
+      const sub = depth < 2 ? resolveIncludes(type, f.text || "", files, depth + 1, seen) : { text: f.text || "", merged: [], missing: [] };
+      merged.push(...sub.merged); missing.push(...sub.missing);
+      return `\n# --- inicio include ${f.name} ---\n${sub.text}\n# --- fin include ${f.name} ---\n`;
+    }).join("");
+  };
+  let out;
+  if (type === "nginx") out = text.replace(/(^|[\s;{}])include\s+([^;#\n]+);/g, (all, pre, path) => { const r = expand(unquote(path.trim())); return r === null ? all : pre + r; });
+  else out = text.split(/\r?\n/).map((line) => {
+    const m = strip(line).match(/^\s*include(?:\s*=\s*|\s+)(.+?)\s*$/i);
+    if (!m) return line;
+    const paths = unquote(m[1]).split(/\s+/).filter(Boolean);
+    const parts = paths.map((pth) => ({ pth, r: expand(pth) }));
+    const left = parts.filter((x) => x.r === null).map((x) => x.pth);
+    return (left.length ? `Include ${left.join(" ")}\n` : "") + parts.filter((x) => x.r !== null).map((x) => x.r).join("");
+  }).join("\n");
+  return { text: out, merged: [...new Set(merged)], missing: [...new Set(missing)] };
+}
+
+// Si un nginx.conf o sshd_config del mismo lote declara include de otro fichero del lote, se fusionan en una sola fuente.
+export function mergeIncludes(files) {
+  const used = new Set();
+  const list = files.map((f) => {
+    if (!f.text) return f;
+    const type = detect(f.name, f.text, false);
+    const pats = findIncludes(type, f.text);
+    if (!pats.length) return f;
+    const pool = files.filter((o) => o !== f && o.text);
+    const hits = [...new Set(pats.flatMap((pt) => matchInclude(pt, pool)))];
+    if (!hits.length) return f;
+    hits.forEach((h) => used.add(h));
+    return { ...f, includes: hits.map((h) => ({ name: h.name, text: h.text })) };
+  });
+  return { list: list.filter((f) => !used.has(f)), used: [...used] };
+}
+
 export function detect(name, text, binary) {
   if (binary) return "cert";
   if (/^\s*\{[\s\S]*"bomFormat"\s*:\s*"CycloneDX"/.test(text)) return "cbom";
@@ -66,9 +125,17 @@ function tlsProtocol(name, versions, suites, groups, sigs) {
 }
 
 export function parseSource(file) {
-  const { name, text, bytes } = file;
+  const { name, bytes } = file;
+  let text = file.text;
   const type = detect(name, text || "", !!bytes);
-  const res = { source: name, type, typeLabel: TYPES[type], protocols: [], algs: [], certs: [], warnings: [] };
+  const res = { source: name, type, typeLabel: TYPES[type], protocols: [], algs: [], certs: [], warnings: [], includes: [], merged: [] };
+  if ((type === "nginx" || type === "sshd") && text) {
+    res.includes = findIncludes(type, text);
+    if (file.includes?.length) {
+      const r = resolveIncludes(type, text, file.includes);
+      text = r.text; res.merged = r.merged; res.missingIncludes = r.missing;
+    } else res.missingIncludes = res.includes;
+  }
   const addAlg = (raw, ctx) => res.algs.push({ raw, ctx });
   const addCerts = (ders) => ders.forEach((d, i) => {
     try { res.certs.push(parseCertificate(d)); }
@@ -104,22 +171,22 @@ export function parseSource(file) {
       if (versions.some((v) => /^(TLSv1(\.[01])?|SSLv[23])$/.test(v))) res.warnings.push("Protocolos TLS 1.0/1.1 o SSL habilitados.");
       if (!groups.length) res.warnings.push("Sin ssl_ecdh_curve: el grupo efectivo depende de la versión de OpenSSL.");
       if (generic.length) res.warnings.push(GENERIC_WARN(generic));
-      const inc = g("include");
-      if (inc.length) res.warnings.push(`Directiva include (${inc.slice(0, 3).join(", ")}): esos ficheros no se siguen; cárgalos también para un inventario completo.`);
+      if (res.merged.length) res.warnings.push(`Include fusionado: ${res.merged.join(", ")}.`);
+      if (res.missingIncludes.length) res.warnings.push(`Directiva include sin fichero (${res.missingIncludes.slice(0, 3).join(", ")}): carga esos ficheros para fusionarlos en esta fuente.`);
       uniq(g("ssl_certificate")).forEach((c) => res.warnings.push(`Referencia a certificado ${unquote(c)}: cárgalo para analizar su clave.`));
     } else if (type === "sshd") {
       // Las directivas tras "Match" solo aplican a ese bloque; se etiquetan con su condición.
       const kw = { kexalgorithms: "kex", hostkeyalgorithms: "hostKeys", ciphers: "ciphers", macs: "macs" };
       const out = { kex: [], hostKeys: [], ciphers: [], macs: [] };
       const ctxName = { kex: "KexAlgorithms", hostKeys: "HostKeyAlgorithms", ciphers: "Ciphers", macs: "MACs" };
-      const removed = [], modifiers = new Set(), includes = [], matches = [];
+      const removed = [], modifiers = new Set(), matches = [];
       let match = null;
       for (const line of strip(text).split("\n")) {
         const m = line.match(/^\s*([A-Za-z]+)(?:\s*=\s*|\s+)(.+?)\s*$/);
         if (!m) continue;
         const k = m[1].toLowerCase();
         if (k === "match") { match = m[2]; matches.push(m[2]); continue; }
-        if (k === "include") { includes.push(m[2]); continue; }
+        if (k === "include") continue;
         const field = kw[k];
         if (!field) continue;
         let v = unquote(m[2]);
@@ -135,7 +202,8 @@ export function parseSource(file) {
       if (!out.kex.length) res.warnings.push("Sin KexAlgorithms explícito: se usan los valores por defecto de OpenSSH.");
       if (removed.length) res.warnings.push(`Eliminados de los valores por defecto con '-' (no se inventarían): ${uniq(removed).join(", ")}.`);
       if (modifiers.has("+") || modifiers.has("^")) res.warnings.push("Listas con '+' o '^': además de lo indicado siguen activos los valores por defecto de OpenSSH, que no se inventarían.");
-      if (includes.length) res.warnings.push(`Include ${includes.join(", ")}: no se sigue; carga esos ficheros también.`);
+      if (res.merged.length) res.warnings.push(`Include fusionado: ${res.merged.join(", ")}.`);
+      if (res.missingIncludes.length) res.warnings.push(`Include sin fichero (${res.missingIncludes.join(", ")}): carga esos ficheros para fusionarlos en esta fuente.`);
       if (matches.length) res.warnings.push(`Bloques Match (${matches.slice(0, 3).join("; ")}): sus algoritmos se marcan con la condición y solo aplican a esas conexiones.`);
     } else if (type === "policy") {
       const t = strip(text);
@@ -198,17 +266,8 @@ export function parseSource(file) {
       p.suites.forEach((s) => s.algs.forEach((a) => addAlg(a, `Suite ${s.name}`)));
       res.warnings.push("Lista de suites que admite la cadena; los grupos de intercambio se configuran aparte (Groups / ssl_ecdh_curve).");
     } else if (type === "cbom") {
-      const bom = JSON.parse(text);
-      if (bom.bomFormat !== "CycloneDX" || !Array.isArray(bom.components)) throw new Error("JSON CycloneDX sin componentes");
-      let n = 0;
-      for (const c of bom.components) {
-        const ap = c?.cryptoProperties;
-        if (c?.type !== "cryptographic-asset" || ap?.assetType !== "algorithm" || !c.name) continue;
-        const ctxProp = (c.properties || []).find((p) => p.name === "cbom-pqc-lab:contextos")?.value;
-        (ctxProp ? ctxProp.split("; ").slice(0, 4) : ["CBOM importado"]).forEach((ctx) => addAlg(String(c.name), `${ctx} (importado)`));
-        n++;
-      }
-      res.warnings.push(`CBOM CycloneDX ${bom.specVersion || "?"} importado: ${n} algoritmos reclasificados con las reglas actuales. Certificados y protocolos no se reconstruyen; carga las fuentes originales para el detalle.`);
+      const r = importCbom(JSON.parse(text));
+      res.algs.push(...r.algs); res.certs.push(...r.certs); res.protocols.push(...r.protocols); res.warnings.push(...r.warnings);
     } else {
       res.warnings.push("No se reconoce el formato. Admite PEM/DER, nginx.conf, sshd_config, openssl.cnf, s_client, nmap, openssl ciphers -v y CBOM CycloneDX (JSON).");
     }
@@ -216,4 +275,53 @@ export function parseSource(file) {
     res.warnings.push(`Error al analizar: ${/^[A-Z][a-z]+Error$/.test(e.name) && e.name !== "Error" ? "contenido con formato inesperado" : e.message}.`);
   }
   return res;
+}
+
+// Reconstruye algoritmos, certificados y protocolos de un CBOM CycloneDX (1.4-1.6) con cryptoProperties.
+export function importCbom(bom) {
+  if (!bom || bom.bomFormat !== "CycloneDX" || !Array.isArray(bom.components)) throw new Error("JSON CycloneDX sin componentes");
+  const out = { algs: [], certs: [], protocols: [], warnings: [] };
+  const crypto = bom.components.filter((c) => c && c.type === "cryptographic-asset" && c.cryptoProperties && typeof c.name === "string");
+  const byRef = new Map(crypto.map((c) => [c["bom-ref"], c]));
+  const prop = (c, n) => (c.properties || []).find((p) => p?.name === n)?.value;
+  const algName = (ref) => { const c = byRef.get(ref); return c?.cryptoProperties.assetType === "algorithm" ? c.name : null; };
+  let na = 0, nc = 0, np = 0;
+  for (const c of crypto) {
+    if (c.cryptoProperties.assetType !== "algorithm") continue;
+    const ctx = prop(c, "cbom-pqc-lab:contextos");
+    (ctx ? ctx.split("; ").slice(0, 4) : ["CBOM importado"]).forEach((x) => out.algs.push({ raw: c.name, ctx: `${x} (importado)` }));
+    na++;
+  }
+  for (const c of crypto) {
+    const cp = c.cryptoProperties.certificateProperties;
+    if (c.cryptoProperties.assetType !== "certificate" || !cp) continue;
+    const nb = new Date(cp.notValidBefore), naf = new Date(cp.notValidAfter);
+    if (isNaN(nb) || isNaN(naf)) { out.warnings.push(`Certificado ${c.name} sin fechas válidas: omitido.`); continue; }
+    const pk = byRef.get(cp.subjectPublicKeyRef);
+    const pkp = pk?.cryptoProperties?.relatedCryptoMaterialProperties || {};
+    const keyAlg = algName(pkp.algorithmRef) || "desconocido";
+    const sigAlg = algName(cp.signatureAlgorithmRef) || "desconocido";
+    const subject = cp.subjectName || `CN=${c.name}`, issuer = cp.issuerName || "";
+    out.certs.push({ imported: true, serial: null, ext: null, subject, issuer, notBefore: nb, notAfter: naf, keyOid: pk?.cryptoProperties?.oid || null, keyAlg, keyFamily: "importado", keySize: pkp.size || null, curve: null, sigOid: null, sigAlg, sigFamily: "importado", selfSigned: !!issuer && issuer === subject, provisional: /^MLDSA\d+-/i.test(keyAlg) || /^MLDSA\d+-/i.test(sigAlg) });
+    nc++;
+  }
+  for (const c of crypto) {
+    const pp = c.cryptoProperties.protocolProperties;
+    if (c.cryptoProperties.assetType !== "protocol" || !pp) continue;
+    const refs = (pp.cryptoRefArray || []).map(algName).filter(Boolean);
+    const versions = pp.version ? String(pp.version).split(/,\s*/) : [];
+    if (pp.type === "ssh") {
+      const by = { kex: [], hostKeys: [], ciphers: [], macs: [] };
+      for (const r of refs) { const cl = classify(r); (cl.role === "kex" || cl.role === "pke" ? by.kex : cl.role === "sig" ? by.hostKeys : cl.role === "mac" ? by.macs : by.ciphers).push(r); }
+      out.protocols.push({ type: "ssh", name: c.name, versions, ...by });
+    } else {
+      const suites = (pp.cipherSuites || []).filter((s) => s?.name).map((s) => ({ name: s.name, algs: (s.algorithms || []).map(algName).filter(Boolean) }));
+      const inSuites = new Set(suites.flatMap((s) => s.algs));
+      const rest = refs.filter((r) => !inSuites.has(r));
+      out.protocols.push({ type: pp.type === "tls" ? "tls" : String(pp.type || "tls"), name: c.name, versions, suites, imported: true, groups: rest.filter((r) => ["kex", "pke"].includes(classify(r).role)), sigs: rest.filter((r) => classify(r).role === "sig") });
+    }
+    np++;
+  }
+  out.warnings.push(`CBOM CycloneDX ${bom.specVersion || "?"} importado: ${na} algoritmos, ${nc} certificados y ${np} protocolos, reclasificados con las reglas actuales. Las extensiones X.509 no forman parte del CBOM.`);
+  return out;
 }

@@ -408,3 +408,25 @@ pre.json { margin: 0; padding: 20px; max-height: 460px; overflow: auto; backgrou
   body { background: #fff; }
 }
 .nowrap { white-space: nowrap; }
+
+/* v0.3: sesión, comparación e includes */
+.errs-box { margin-top: 14px; padding: 12px 14px; border-radius: var(--radius-sm); background: var(--danger-soft); }
+.errs-box p { color: var(--danger); margin: 0 0 6px; }
+.errs-box .errs { margin: 0; }
+.inc-btn { margin-top: 8px; }
+.diff-kv { margin-top: 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.diff-kv .tone-good b { color: var(--ok); }
+.diff-kv .tone-bad b { color: var(--danger); }
+.diff-bars { display: grid; gap: 6px; margin-top: 16px; }
+.diff-bars .bar span { transition: transform 600ms var(--ease-out); }
+.diff-bars .bar:not(.now) span, .k-prev { background: color-mix(in srgb, var(--text-2) 45%, transparent); }
+.diff-list { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 6px; }
+.diff-item { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--surface-2); }
+.diff-item .name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.diff-item svg { width: 14px; height: 14px; color: var(--text-2); }
+.diff-mark { width: 20px; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+.diff-item.add .diff-mark { color: var(--ok); }
+.diff-item.rm .diff-mark { color: var(--danger); }
+.diff-item.rm .name { text-decoration: line-through; text-decoration-color: var(--text-2); }
+.diff-item.chg .diff-mark { color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .diff-bars .bar span { transition: none; } }

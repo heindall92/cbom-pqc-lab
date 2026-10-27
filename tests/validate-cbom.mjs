@@ -29,6 +29,15 @@ if (!ok) console.error(validate.errors);
 const errs = checkCbom(bom);
 if (errs.length) { console.error(errs); ok = false; }
 
+// Ida y vuelta: CBOM importado (algoritmos, certificados y protocolos) y exportado de nuevo
+const inv2 = buildInventory([{ name: "previo.cdx.json", parsed: parseSource({ name: "previo.cdx.json", text: JSON.stringify(bom) }) }]);
+const bom2 = JSON.parse(JSON.stringify(buildCbom(inv2, buildPlan(inv2, assets, 10), { z: 10 })));
+if (!validate(bom2)) { console.error("ida y vuelta", validate.errors); ok = false; }
+if (checkCbom(bom2).length) { console.error(checkCbom(bom2)); ok = false; }
+const types = (b) => ["algorithm", "certificate", "related-crypto-material", "protocol"].map((t) => b.components.filter((c) => c.cryptoProperties.assetType === t).length).join("/");
+if (types(bom2) !== types(bom)) { console.error("ida y vuelta: recuentos", types(bom), types(bom2)); ok = false; }
+console.log(`Ida y vuelta CBOM: ${types(bom2)} (algoritmos/certificados/claves/protocolos), esquema 1.6 ${validate(bom2) ? "VÁLIDO" : "con ERRORES"}`);
+
 // Pruebas de la lógica de Mosca
 const cases = [[30, 6, 10, true], [5, 5, 10, false], [5, 6, 10, true], [0, 3, 10, false]];
 for (const [x, y, z, exp] of cases) if (evaluate(x, y, z).critical !== exp) { console.error("Mosca", x, y, z); ok = false; }

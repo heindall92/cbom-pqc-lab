@@ -74,12 +74,6 @@ export const OIDS = {
   "1.3.101.113": { name: "Ed448", family: "EdDSA" },
   "1.3.101.110": { name: "X25519", family: "ECDH" },
   "1.2.840.10040.4.1": { name: "DSA", family: "DSA" },
-  "2.16.840.1.101.3.4.3.17": { name: "ML-DSA-44", family: "ML-DSA" },
-  "2.16.840.1.101.3.4.3.18": { name: "ML-DSA-65", family: "ML-DSA" },
-  "2.16.840.1.101.3.4.3.19": { name: "ML-DSA-87", family: "ML-DSA" },
-  "2.16.840.1.101.3.4.4.1": { name: "ML-KEM-512", family: "ML-KEM" },
-  "2.16.840.1.101.3.4.4.2": { name: "ML-KEM-768", family: "ML-KEM" },
-  "2.16.840.1.101.3.4.4.3": { name: "ML-KEM-1024", family: "ML-KEM" },
   "1.2.840.113549.1.1.5": { name: "SHA1withRSA", family: "RSA" },
   "1.2.840.113549.1.1.11": { name: "SHA256withRSA", family: "RSA" },
   "1.2.840.113549.1.1.12": { name: "SHA384withRSA", family: "RSA" },
@@ -89,7 +83,35 @@ export const OIDS = {
   "1.2.840.10045.4.3.3": { name: "SHA384withECDSA", family: "ECDSA" },
   "1.2.840.10045.4.3.4": { name: "SHA512withECDSA", family: "ECDSA" },
 };
-for (let i = 20; i <= 31; i++) OIDS[`2.16.840.1.101.3.4.3.${i}`] = { name: "SLH-DSA", family: "SLH-DSA" };
+
+// PQC estandarizado. Fuente: NIST CSOR, "Computer Security Objects Register - Algorithm Registration"
+// (sigAlgs = 2.16.840.1.101.3.4.3, kems = 2.16.840.1.101.3.4.4); RFC 9881 (ML-DSA en X.509).
+const SIG = "2.16.840.1.101.3.4.3.";
+[44, 65, 87].forEach((n, i) => {
+  OIDS[`${SIG}${17 + i}`] = { name: `ML-DSA-${n}`, family: "ML-DSA", param: String(n) };
+  OIDS[`${SIG}${32 + i}`] = { name: `HashML-DSA-${n}-SHA512`, family: "ML-DSA", param: String(n) };
+});
+const SLH = ["SHA2-128s", "SHA2-128f", "SHA2-192s", "SHA2-192f", "SHA2-256s", "SHA2-256f", "SHAKE-128s", "SHAKE-128f", "SHAKE-192s", "SHAKE-192f", "SHAKE-256s", "SHAKE-256f"];
+const SLH_PH = ["SHA256", "SHA256", "SHA512", "SHA512", "SHA512", "SHA512", "SHAKE128", "SHAKE128", "SHAKE256", "SHAKE256", "SHAKE256", "SHAKE256"];
+SLH.forEach((v, i) => {
+  OIDS[`${SIG}${20 + i}`] = { name: `SLH-DSA-${v}`, family: "SLH-DSA", param: v };
+  OIDS[`${SIG}${35 + i}`] = { name: `HashSLH-DSA-${v}-${SLH_PH[i]}`, family: "SLH-DSA", param: v };
+});
+[512, 768, 1024].forEach((n, i) => { OIDS[`2.16.840.1.101.3.4.4.${i + 1}`] = { name: `ML-KEM-${n}`, family: "ML-KEM", param: String(n) }; });
+
+// Firmas compuestas ML-DSA + tradicional. Fuente: draft-ietf-lamps-pq-composite-sigs-19, sección 6
+// (arco 1.3.6.1.5.5.7.6, asignación temprana de IANA). Son de BORRADOR: se marcan como provisionales.
+export const COMPOSITE_SOURCE = "draft-ietf-lamps-pq-composite-sigs-19";
+[
+  [37, "MLDSA44-RSA2048-PSS-SHA256"], [38, "MLDSA44-RSA2048-PKCS15-SHA256"], [39, "MLDSA44-Ed25519-SHA512"], [40, "MLDSA44-ECDSA-P256-SHA256"],
+  [41, "MLDSA65-RSA3072-PSS-SHA512"], [42, "MLDSA65-RSA3072-PKCS15-SHA512"], [43, "MLDSA65-RSA4096-PSS-SHA512"], [44, "MLDSA65-RSA4096-PKCS15-SHA512"],
+  [45, "MLDSA65-ECDSA-P256-SHA512"], [46, "MLDSA65-ECDSA-P384-SHA512"], [47, "MLDSA65-ECDSA-brainpoolP256r1-SHA512"], [48, "MLDSA65-Ed25519-SHA512"],
+  [49, "MLDSA87-ECDSA-P384-SHA512"], [50, "MLDSA87-ECDSA-brainpoolP384r1-SHA512"], [51, "MLDSA87-Ed448-SHAKE256"], [52, "MLDSA87-RSA3072-PSS-SHA512"],
+  [53, "MLDSA87-RSA4096-PSS-SHA512"], [54, "MLDSA87-ECDSA-P521-SHA512"],
+].forEach(([n, id]) => {
+  const [, ml, trad] = id.match(/^MLDSA(\d+)-(.+?)-(?:SHA\d+|SHAKE256)$/);
+  OIDS[`1.3.6.1.5.5.7.6.${n}`] = { name: id, family: "composite", param: ml, components: [`ML-DSA-${ml}`, trad], provisional: true };
+});
 
 export const CURVES = {
   "1.2.840.10045.3.1.7": "P-256",
@@ -185,6 +207,7 @@ function parseCertificateStrict(buf) {
   const keyInfo = OIDS[keyOid] || { name: keyOid, family: "desconocido" };
   let keySize = null;
   let curve = null;
+  let pubBytes = null;
   if (keyInfo.family === "RSA") {
     const bits = buf.subarray(keyBits.start + 1, keyBits.end);
     const seq = readTLV(bits, 0);
@@ -201,6 +224,8 @@ function parseCertificateStrict(buf) {
     curve = "parámetros explícitos";
   } else if (keyInfo.family === "EdDSA") {
     keySize = keyInfo.name === "Ed25519" ? 256 : 456;
+  } else if (keyBits && keyBits.len > 1) {
+    pubBytes = keyBits.len - 1; // PQC y compuestos: tamaño de la clave pública codificada
   }
   const sigOid = oid(buf, children(buf, sigAlg)[0]);
   const sigInfo = OIDS[sigOid] || { name: sigOid, family: "desconocido" };
@@ -211,6 +236,8 @@ function parseCertificateStrict(buf) {
     serial, ext,
     subject, issuer, notBefore: time(buf, nb), notAfter: time(buf, na),
     keyOid, keyAlg: keyInfo.name, keyFamily: keyInfo.family, keySize, curve,
-    sigOid, sigAlg: sigInfo.name, sigFamily: sigInfo.family, selfSigned,
+    sigOid, sigAlg: sigInfo.name, sigFamily: sigInfo.family, selfSigned, pubBytes,
+    paramSet: keyInfo.param || null, components: keyInfo.components || sigInfo.components || null,
+    provisional: !!(keyInfo.provisional || sigInfo.provisional),
   };
 }
