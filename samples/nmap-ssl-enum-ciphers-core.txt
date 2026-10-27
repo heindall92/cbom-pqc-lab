@@ -1,0 +1,18 @@
+# DATOS DE EJEMPLO - Banco Ficticio Atlántida S.A. (entidad inventada, no real)
+# Salida pegada de: nmap --script ssl-enum-ciphers -p 443 core-legacy.atlantida.example
+PORT    STATE SERVICE
+443/tcp open  https
+| ssl-enum-ciphers:
+|   TLSv1.0:
+|     ciphers:
+|       TLS_RSA_WITH_3DES_EDE_CBC_SHA (rsa 2048) - C
+|       TLS_RSA_WITH_RC4_128_SHA (rsa 2048) - F
+|   TLSv1.2:
+|     ciphers:
+|       TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 (secp256r1) - A
+|       TLS_RSA_WITH_AES_128_CBC_SHA (rsa 2048) - A
+|       TLS_DHE_RSA_WITH_AES_128_GCM_SHA256 (dh 2048) - A
+|     compressors:
+|       NULL
+|     cipher preference: server
+|_  least strength: F

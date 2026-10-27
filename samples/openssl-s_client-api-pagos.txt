@@ -1,0 +1,38 @@
+# DATOS DE EJEMPLO - Banco Ficticio Atlántida S.A. (entidad inventada, no real)
+# Salida pegada de: openssl s_client -connect api-pagos.atlantida.example:443 -groups X25519MLKEM768:X25519
+CONNECTED(00000003)
+---
+Server certificate
+-----BEGIN CERTIFICATE-----
+MIIDzTCCAbWgAwIBAgIUdjobBH8kT2F09LBrR9JgeorWJvkwDQYJKoZIhvcNAQEL
+BQAwYzELMAkGA1UEBhMCRVMxMDAuBgNVBAoMJ0JhbmNvIEZpY3RpY2lvIEF0bGFu
+dGlkYSBTLkEuIChFSkVNUExPKTEiMCAGA1UEAwwZQXRsYW50aWRhIFJvb3QgQ0Eg
+RUpFTVBMTzAeFw0yNjEwMjcxNDMzNDlaFw0yNzExMjgxNDMzNDlaMGUxCzAJBgNV
+BAYTAkVTMTAwLgYDVQQKDCdCYW5jbyBGaWN0aWNpbyBBdGxhbnRpZGEgUy5BLiAo
+RUpFTVBMTykxJDAiBgNVBAMMG2FwaS1wYWdvcy5hdGxhbnRpZGEuZXhhbXBsZTBZ
+MBMGByqGSM49AgEGCCqGSM49AwEHA0IABB9YxVRCzeofCMwA4NfH6NgEplLXlEap
+hbpQBKPloGlH/4N8843laRvtBb7n/Fs2BfAmRkTCSQ7EPyX8/n/fcM+jQjBAMB0G
+A1UdDgQWBBRRkQE7TDcQSb/H58aTyEsG3KnH2zAfBgNVHSMEGDAWgBS1XusT48JW
+Fo3L2NBE2/iiPhc9ODANBgkqhkiG9w0BAQsFAAOCAgEAs9NVDfqMpGZ+1jq6kj7N
+cjUCPm/k+a/XzSBwIyAsklzM7kzeQCO9NjKvSNGUxMavkFPsVjORiTr5kZiQ7TU3
+Af3mwr9TXD0VxJTNBT5e7snC/hg1dnXvjHA1pkvr3CiorHcTQxRXRrKtBSWAtFGQ
+CeI6sByYwSt8cpsIKWbky2yLs9Gah0xF4aUkEmWNwymwva2WqXtq8TJE00yuWj5S
+lRIFxqaEitf7qU1jzWM3Aan7yPYsWTLwbd1VxisvHtR0iSg2HyzH9wUn4TGcXeDi
+3uHc36gjqmt4wlftdJBlyGalVM9amGFD3VS4TD63IqgRjZ5u8qwH27sgcF74tyqc
+x+15Qi5NTOBWpCm5nlbt+MJsZUCdA5X5Fk+N3is1i6Ydr3H9YbQbX8sMWEC0VSN9
+Ts8NgjtHiJcw3h8tdg8UmYk+7tfN03pGU1Avnx+yjlOWuLHilXBryrTaA7V/qzum
+dZy4RMYO5DB4t0oiSjOYD9CcgwV4HQnfcP1WuxaqIJanG8unI51dbAh6PlgzohOR
+nHPnPpzp1aaCl6TZWrPffDNti+fZjIryQojV28f15/uIpSczBMxKw4KFP4HcvvR0
+qudmLLhyEdK5TFznMkpUkr3EWHQstBdzCRFA1zBT9T7+FEObZWPl2oGHX/om+bc/
+YSmH0Y3Jglss/Ww7L4ncElo=
+-----END CERTIFICATE-----
+subject=C=ES, O=Banco Ficticio Atlantida S.A. (EJEMPLO), CN=api-pagos.atlantida.example
+issuer=C=ES, O=Banco Ficticio Atlantida S.A. (EJEMPLO), CN=Atlantida Root CA EJEMPLO
+---
+Peer signing digest: SHA256
+Peer signature type: ECDSA
+Negotiated TLS1.3 group: X25519MLKEM768
+---
+New, TLSv1.3, Cipher is TLS_AES_256_GCM_SHA384
+Protocol: TLSv1.3
+Server public key is 256 bit

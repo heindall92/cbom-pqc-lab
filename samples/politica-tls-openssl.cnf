@@ -1,0 +1,8 @@
+# DATOS DE EJEMPLO - Banco Ficticio Atlántida S.A. (entidad inventada, no real)
+# Política TLS corporativa (formato openssl.cnf / system_default)
+[system_default_sect]
+MinProtocol = TLSv1.2
+CipherString = ECDHE+AESGCM:ECDHE+CHACHA20
+Ciphersuites = TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256
+Groups = X25519MLKEM768:X25519:secp256r1
+SignatureAlgorithms = ECDSA+SHA256:RSA-PSS+SHA256:mldsa65

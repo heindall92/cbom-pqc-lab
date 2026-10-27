@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="es" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>CBOM & PQC Lab para Banca</title>
+  <meta name="description" content="Inventario criptográfico (CBOM), Teorema de Mosca y plan de transición post-cuántica. Funciona 100 % en local.">
+  <link rel="preload" href="vendor/fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/app.css">
+  <script src="js/theme-boot.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="top-inner">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><i data-lucide="shield-half"></i></span>
+        <span>CBOM &amp; PQC Lab<small>para Banca · v0.1</small></span>
+      </div>
+      <nav class="tabs" role="tablist" aria-label="Secciones">
+        <button class="tab" role="tab" data-view="inventario"><i data-lucide="scan-search" class="ico ico-pop"></i>Inventario</button>
+        <button class="tab" role="tab" data-view="mosca"><i data-lucide="hourglass" class="ico ico-tilt"></i>Mosca</button>
+        <button class="tab" role="tab" data-view="plan"><i data-lucide="route" class="ico ico-nudge"></i>Plan PQC</button>
+        <button class="tab" role="tab" data-view="exportar"><i data-lucide="file-json" class="ico ico-lift"></i>Exportar</button>
+      </nav>
+      <div class="top-actions">
+        <span class="pill-local" title="Nada sale de este navegador"><i data-lucide="lock-keyhole"></i><span class="txt">100 % local</span></span>
+        <button class="btn btn-tertiary btn-icon" id="theme" aria-label="Cambiar tema claro u oscuro"><i data-lucide="moon" class="ico ico-tilt"></i></button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="view" id="view-inventario" aria-labelledby="h-inv"></section>
+    <section class="view" id="view-mosca" aria-labelledby="h-mosca"></section>
+    <section class="view" id="view-plan" aria-labelledby="h-plan"></section>
+    <section class="view" id="view-exportar" aria-labelledby="h-exp"></section>
+  </main>
+
+  <nav class="tabbar" role="tablist" aria-label="Secciones">
+    <button class="tab" role="tab" data-view="inventario"><i data-lucide="scan-search"></i>Inventario</button>
+    <button class="tab" role="tab" data-view="mosca"><i data-lucide="hourglass"></i>Mosca</button>
+    <button class="tab" role="tab" data-view="plan"><i data-lucide="route"></i>Plan</button>
+    <button class="tab" role="tab" data-view="exportar"><i data-lucide="file-json"></i>Exportar</button>
+  </nav>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <input type="file" id="file" multiple hidden accept=".pem,.crt,.cer,.der,.conf,.cnf,.txt,.cfg,text/plain">
+
+  <script src="vendor/lucide.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
