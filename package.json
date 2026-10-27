@@ -1,13 +1,14 @@
 {
   "name": "cbom-pqc-lab",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "CBOM & PQC Lab para Banca: inventario criptográfico, Teorema de Mosca y plan de transición post-cuántica, 100 % en el navegador.",
   "type": "module",
   "scripts": {
     "serve": "python3 serve.py",
     "samples": "python3 tools/build-samples.py",
-    "test": "node tests/validate-cbom.mjs"
+    "test": "node tests/unit.mjs && node tests/validate-cbom.mjs",
+    "test:e2e": "node tests/e2e.mjs"
   },
   "devDependencies": {
     "ajv": "^8.17.1",

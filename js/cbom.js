@@ -77,7 +77,7 @@ export function buildCbom(inv, plan, meta = {}) {
     bomFormat: "CycloneDX", specVersion: "1.6", serialNumber: `urn:uuid:${uuid()}`, version: 1,
     metadata: {
       timestamp: new Date().toISOString(),
-      tools: { components: [{ type: "application", name: "CBOM & PQC Lab para Banca", version: "0.1.0" }] },
+      tools: { components: [{ type: "application", name: "CBOM & PQC Lab para Banca", version: "0.2.0" }] },
       component: { type: "application", "bom-ref": "sistema-evaluado", name: meta.name || "Inventario criptográfico" },
       properties: [{ name: "cbom-pqc-lab:mosca-z", value: String(meta.z ?? "") }],
     },

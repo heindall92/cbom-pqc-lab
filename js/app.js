@@ -2,9 +2,10 @@ import { SAMPLES } from "./samples.js";
 import { parseSource, TYPES } from "./parsers.js";
 import { buildInventory } from "./inventory.js";
 import { CATEGORIES, ROLES } from "./classify.js";
-import { ASSET_PRESETS, Z_PRESETS, evaluate, LEVELS } from "./mosca.js";
+import { ASSET_PRESETS, Z_PRESETS, evaluate, sensitivity, LEVELS } from "./mosca.js";
 import { buildPlan, PRIORITIES } from "./plan.js";
 import { buildCbom, checkCbom } from "./cbom.js";
+import { readiness, chainStatus, certIssues, buildMarkdown } from "./report.js";
 
 const KEY = "cbom-pqc-lab:v1";
 const $ = (s, r = document) => r.querySelector(s);
@@ -12,6 +13,9 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const reduced = matchMedia("(prefers-reduced-motion: reduce)");
 const YEAR = new Date().getFullYear();
+const VIEWS = ["inventario", "mosca", "plan", "exportar"];
+const nf = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 2 });
+const fmt = (n) => nf.format(n);
 
 const AUTOLINK = {
   hipoteca: ["nginx", "banca-online", "root-ca", "politica"],
@@ -32,11 +36,30 @@ let state = load();
 let parsed = [];
 let inv = { algorithms: [], certificates: [], protocols: [] };
 
+// Acepta solo un estado guardado con la forma esperada; lo demás vuelve a valores por defecto.
+function sanitize(s) {
+  const d = defaults();
+  if (!s || typeof s !== "object" || Array.isArray(s)) return d;
+  const str = (v) => typeof v === "string";
+  const num = (v, lo, hi, def) => (Number.isFinite(Number(v)) && v !== "" && v !== null ? Math.min(Math.max(Number(v), lo), hi) : def);
+  const out = { ...d };
+  if (s.theme === "light" || s.theme === "dark") out.theme = s.theme;
+  if (VIEWS.includes(s.view)) out.view = s.view;
+  if (Array.isArray(s.sources)) out.sources = s.sources.filter((x) => x && str(x.name) && (str(x.text) || str(x.b64))).map((x) => ({ id: str(x.id) ? x.id : `s-${Math.random().toString(36).slice(2, 9)}`, name: x.name, ...(str(x.b64) ? { b64: x.b64 } : { text: x.text }), ...(x.sample ? { sample: true } : {}) }));
+  out.z = num(s.z, 1, 50, d.z);
+  out.zPreset = Z_PRESETS.find((p) => p.id === s.zPreset && p.z === out.z)?.id || null;
+  if (Array.isArray(s.assets)) out.assets = s.assets.filter((a) => a && str(a.id)).map((a) => ({
+    id: a.id, name: str(a.name) ? a.name : "Activo", x: num(a.x, 0, 100, 0), y: num(a.y, 0, 50, 0), hint: str(a.hint) ? a.hint : "", kind: a.kind,
+    custom: !!a.custom, links: Array.isArray(a.links) ? a.links.filter(str) : null,
+  }));
+  if (s.statuses && typeof s.statuses === "object" && !Array.isArray(s.statuses)) out.statuses = Object.fromEntries(Object.entries(s.statuses).filter(([, v]) => ["pendiente", "en-curso", "migrado", "aceptado"].includes(v)));
+  if (s.filter === "all" || Object.keys(CATEGORIES).includes(s.filter)) out.filter = s.filter;
+  if (str(s.query)) out.query = s.query;
+  return out;
+}
 function load() {
-  try {
-    const s = JSON.parse(localStorage.getItem(KEY) || "null");
-    return s ? { ...defaults(), ...s } : defaults();
-  } catch { return defaults(); }
+  try { return sanitize(JSON.parse(localStorage.getItem(KEY) || "null")); }
+  catch { return defaults(); }
 }
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(state)); }
@@ -56,9 +79,12 @@ function bytesToB64(u) {
 }
 
 function recompute() {
-  parsed = state.sources.map((s) => ({
-    ...s, parsed: parseSource(s.b64 ? { name: s.name, bytes: b64ToBytes(s.b64) } : { name: s.name, text: s.text }),
-  }));
+  parsed = state.sources.map((s) => {
+    let p;
+    try { p = parseSource(s.b64 ? { name: s.name, bytes: b64ToBytes(s.b64) } : { name: s.name, text: s.text }); }
+    catch { p = { source: s.name, type: "unknown", typeLabel: TYPES.unknown, protocols: [], algs: [], certs: [], warnings: ["Datos guardados ilegibles: vuelve a cargar el fichero."] }; }
+    return { ...s, parsed: p };
+  });
   inv = buildInventory(parsed);
 }
 
@@ -88,7 +114,9 @@ const ic = (name, cls = "") => `<i data-lucide="${name}" class="${cls}"></i>`;
 function show(view, animate = true) {
   state.view = view;
   save();
-  $$(".tab").forEach((t) => t.setAttribute("aria-selected", String(t.dataset.view === view)));
+  if (!VIEWS.includes(view)) view = "inventario";
+  state.view = view;
+  $$(".tab").forEach((t) => { const on = t.dataset.view === view; t.setAttribute("aria-selected", String(on)); t.tabIndex = on ? 0 : -1; });
   $$(".view").forEach((v) => v.classList.toggle("is-active", v.id === `view-${view}`));
   render(view);
   const el = $(`#view-${view}`);
@@ -127,6 +155,7 @@ function renderInventory() {
     .filter((a) => !q || `${a.name} ${a.contexts.join(" ")} ${a.sources.join(" ")}`.toLowerCase().includes(q))
     .sort((a, b) => CATEGORIES[a.category].order - CATEGORIES[b.category].order || a.name.localeCompare(b.name));
   const order = ["vulnerable", "legacy", "hybrid", "pqc", "symmetric", "unknown"];
+  const chains = chainStatus(inv.certificates);
 
   el.innerHTML = `
   <div class="stagger">
@@ -141,7 +170,7 @@ function renderInventory() {
     <div class="drop" id="drop">
       <div>
         <h2>${ic("upload")}Suelta ficheros aquí</h2>
-        <p class="muted" style="margin-top:6px">PEM o DER, nginx.conf, sshd_config, openssl.cnf, o texto de <code>openssl s_client</code> y <code>nmap --script ssl-enum-ciphers</code>.</p>
+        <p class="muted" style="margin-top:6px">PEM o DER, nginx.conf, sshd_config, openssl.cnf, texto de <code>openssl s_client</code>, <code>openssl ciphers -v</code> y <code>nmap --script ssl-enum-ciphers</code>, o un CBOM CycloneDX en JSON para reeditarlo.</p>
         <p class="note">${ic("info")}<span>Un navegador no puede abrir conexiones TLS ni escanear puertos. Para analizar un endpoint, ejecuta en tu equipo <code>openssl s_client -connect host:443</code> o <code>nmap --script ssl-enum-ciphers -p 443 host</code> y pega la salida.</span></p>
       </div>
       <div class="row-wrap">
@@ -165,6 +194,7 @@ function renderInventory() {
         <div class="mix" role="img" aria-label="Distribución por clasificación">${order.filter((k) => counts[k]).map((k) => `<span class="fill c-${k}" style="flex-grow:${counts[k]}"></span>`).join("")}</div>
         <div class="legend">${order.filter((k) => counts[k]).map((k) => `<span class="legend-item c-${k}"><span class="dot fill"></span><b>${counts[k]}</b>${esc(CATEGORIES[k].label)}</span>`).join("")}</div>
       </div>
+      ${readinessPanel()}
     </div>` : ""}
 
     <div class="section">
@@ -178,7 +208,7 @@ function renderInventory() {
           <span class="muted small wide">${s.parsed.warnings.map(esc).join("<br>") || "—"}</span>
           <button class="btn btn-tertiary btn-sm btn-icon" data-act="rm" data-id="${esc(s.id)}" aria-label="Quitar ${esc(s.name)}">${ic("x")}</button>
         </div>`).join("")}
-      </div>` : `<div class="list empty">${ic("inbox")}<p>Aún no hay fuentes. Carga el ejemplo del banco ficticio para ver la herramienta en marcha.</p></div>`}
+      </div>` : `<div class="list empty">${ic("inbox")}<p><b>Aún no hay fuentes.</b></p><p class="small" style="margin-top:4px">Carga el ejemplo del banco ficticio para ver la herramienta en marcha, o arrastra aquí tus ficheros. Nada sale de este navegador.</p></div>`}
     </div>
 
     ${total ? `
@@ -207,12 +237,18 @@ function renderInventory() {
         <div class="list-head cols-cert"><span>Sujeto</span><span>Clave</span><span>Firma</span><span>Validez</span><span>Estado</span></div>
         ${inv.certificates.map((c) => {
           const key = inv.algorithms.find((a) => a.id === c.keyRef);
-          const days = Math.round((c.notAfter - Date.now()) / 864e5);
+          const days = Math.floor((c.notAfter - Date.now()) / 864e5);
+          const chain = chains[c.id];
+          const issues = certIssues(c);
+          const e = c.ext || {};
+          const facts = [e.ca === true ? `CA${e.pathLen != null ? ` · pathLen ${e.pathLen}` : ""}` : e.ca === false ? "Entidad final" : null,
+            e.san?.length ? `SAN: ${e.san.slice(0, 2).join(", ")}${e.san.length > 2 ? ` +${e.san.length - 2}` : ""}` : null,
+            e.keyUsage?.length ? `Uso: ${e.keyUsage.join(", ")}` : null, e.extKeyUsage?.length ? `EKU: ${e.extKeyUsage.join(", ")}` : null].filter(Boolean);
           return `<div class="list-row cols-cert">
-            <span class="name wide">${esc(c.cn)}<span class="sub">${c.selfSigned ? "Autofirmado / raíz" : `Emisor: ${esc((c.issuer.match(/CN=([^,]+)/) || [])[1] || c.issuer)}`}</span></span>
+            <span class="name wide">${esc(c.cn)}<span class="sub">${esc(chain?.label || "")}</span>${facts.length ? `<span class="sub facts">${facts.map(esc).join(" · ")}</span>` : ""}${issues.length ? `<span class="sub warn">${ic("triangle-alert")}${issues.map(esc).join(" · ")}</span>` : ""}</span>
             <span><span class="lbl">Clave</span>${esc(key?.name || c.keyAlg)}</span>
             <span><span class="lbl">Firma</span>${esc(c.sigAlg)}</span>
-            <span class="tabular small"><span class="lbl">Validez</span>${c.notBefore.toISOString().slice(0, 10)} → ${c.notAfter.toISOString().slice(0, 10)}<span class="sub">${days >= 0 ? `${days} días restantes` : "Caducado"}</span></span>
+            <span class="tabular small"><span class="lbl">Validez</span><span class="nowrap">${c.notBefore.toISOString().slice(0, 10)}</span> → <span class="nowrap">${c.notAfter.toISOString().slice(0, 10)}</span><span class="sub">${days >= 0 ? `${days} ${days === 1 ? "día restante" : "días restantes"}` : "Caducado"}</span></span>
             <span>${badge(key?.category || "unknown")}</span>
           </div>`;
         }).join("")}
@@ -235,6 +271,19 @@ function renderInventory() {
   </div>`;
   icons(el);
   bindDrop();
+}
+
+function readinessPanel() {
+  const r = readiness(inv);
+  if (r.score === null) return "";
+  return `<div class="panel pad ready">
+    <div class="ready-score"><span class="ready-num tabular">${r.score}</span><span class="ready-of">/100</span>
+      <div><h3>Preparación PQC</h3><p class="muted small">Indicador orientativo propio de esta herramienta, no una métrica estándar. Ponderación visible a la derecha.</p></div>
+    </div>
+    <ul class="ready-parts">${r.parts.map((p) => `<li><span class="small">${esc(p.label)} <span class="muted">· peso ${p.weight}</span></span>
+      <span class="bar" aria-hidden="true"><span style="transform:scaleX(${(p.pct ?? 0) / 100})"></span></span>
+      <span class="small tabular">${p.n ? `${p.ok}/${p.n}` : "Sin datos"}</span></li>`).join("")}</ul>
+  </div>`;
 }
 
 function addSources(list) {
@@ -275,7 +324,7 @@ function timeline(ev) {
   const pct = (v) => `${(Math.min(v, span) / span) * 100}%`;
   const overStart = Math.max(ev.Z, ev.Y);
   const over = ev.sum > ev.Z ? `<span class="tl-seg tl-over" style="left:${pct(overStart)};width:calc(${pct(ev.sum)} - ${pct(overStart)})"></span>` : "";
-  return `<div class="timeline" role="img" aria-label="Migración ${ev.Y} años, confidencialidad ${ev.X} años, amenaza en ${ev.Z} años">
+  return `<div class="timeline" role="img" aria-label="Migración ${fmt(ev.Y)} años, confidencialidad ${fmt(ev.X)} años, amenaza en ${fmt(ev.Z)} años">
       <div class="tl-track">
         <span class="tl-seg tl-y" style="left:0;width:${pct(ev.Y)}"></span>
         <span class="tl-seg tl-x" style="left:${pct(ev.Y)};width:calc(${pct(ev.sum)} - ${pct(ev.Y)})"></span>
@@ -283,7 +332,7 @@ function timeline(ev) {
       </div>
       <span class="tl-z" style="left:${pct(ev.Z)}"><span>Z · ${YEAR + ev.Z}</span></span>
     </div>
-    <div class="tl-scale"><span>${YEAR}</span><span>${YEAR + Math.round(span / 2)}</span><span>${YEAR + span}</span></div>`;
+    <div class="tl-scale"><span>${YEAR}</span><span>${YEAR + Math.round(span / 2)}</span><span>${YEAR + Math.round(span)}</span></div>`;
 }
 
 function renderMosca() {
@@ -330,7 +379,7 @@ function renderMosca() {
           const ev = evs[i];
           return `<div class="asset" data-asset="${esc(a.id)}">
             <div class="asset-name">
-              <label class="field">Activo<input type="text" data-f="name" value="${esc(a.name)}"></label>
+              <label class="field">Activo<input type="text" data-f="name" maxlength="80" value="${esc(a.name)}"></label>
               ${a.hint ? `<p class="asset-hint">${esc(a.hint)}</p>` : ""}
             </div>
             <label class="field">X · confidencial<input type="number" min="0" max="100" step="0.5" data-f="x" value="${a.x}"></label>
@@ -338,7 +387,7 @@ function renderMosca() {
             <div class="asset-viz">
               <div class="asset-result">
                 <span class="badge lv-${ev.level}" style="color:var(--c);background:var(--cs)">${ic(ev.critical ? "octagon-alert" : ev.level === "warning" ? "circle-alert" : "circle-check")}${esc(LEVELS[ev.level].label)}</span>
-                <span class="small tabular muted">${ev.X} + ${ev.Y} = <b style="color:var(--text)">${ev.sum}</b> ${ev.critical ? "&gt;" : "≤"} ${ev.Z} · ${ev.margin > 0 ? `exceso ${ev.margin} años` : `holgura ${-ev.margin} años`}</span>
+                <span class="small tabular muted">${fmt(ev.X)} + ${fmt(ev.Y)} = <b style="color:var(--text)">${fmt(ev.sum)}</b> ${ev.critical ? "&gt;" : "≤"} ${fmt(ev.Z)} · ${ev.margin > 0 ? `exceso ${fmt(ev.margin)} años` : `holgura ${fmt(-ev.margin)} años`}</span>
               </div>
               ${timeline(ev)}
               ${cs.length ? `<div class="links" aria-label="Por dónde viaja o se protege este activo">
@@ -350,6 +399,15 @@ function renderMosca() {
         }).join("")}
       </div>
       <div class="tl-key"><span><i style="background:color-mix(in srgb, var(--text-2) 45%, transparent)"></i>Y · migración</span><span><i style="background:var(--accent)"></i>X · vida confidencial</span><span><i style="background:var(--danger)"></i>Expuesto tras Z</span></div>
+    </div>
+
+    <div class="section">
+      <div class="section-head"><h2>Sensibilidad al horizonte Z</h2><span class="muted small">El activo entra en deuda crítica si Z es menor que X + Y.</span></div>
+      <div class="list sens" role="table" aria-label="Resultado de cada activo en cada escenario de Z">
+        <div class="sens-row list-head" role="row"><span role="columnheader">Activo</span><span role="columnheader">Crítico si Z &lt;</span>${Z_PRESETS.map((p) => `<span role="columnheader"><span class="full">${esc(p.label)} · </span>Z ${p.z}</span>`).join("")}</div>
+        ${assets.map((a) => { const sv = sensitivity(a.x, a.y); return `<div class="sens-row" role="row"><span role="cell" class="name">${esc(a.name)}</span><span role="cell" class="tabular">${fmt(sv.threshold)} años</span>${sv.byPreset.map((p) => `<span role="cell"><span class="badge lv-${p.ev.level}" style="color:var(--c);background:var(--cs)">${esc(LEVELS[p.ev.level].short)}</span></span>`).join("")}</div>`; }).join("")}
+      </div>
+      <p class="note">${ic("info")}<span>Los escenarios de Z son supuestos de trabajo de esta herramienta, no previsiones publicadas. Cambia Z arriba para comparar otros horizontes.</span></p>
     </div>
   </div>`;
   icons(el);
@@ -456,8 +514,18 @@ function renderExport() {
           <button class="btn btn-secondary" data-act="copy" ${lastBom.components.length ? "" : "disabled"}>${ic("copy", "ico ico-pop")}Copiar JSON</button>
         </div>
       </div>
-      ${errs.length ? `<p class="muted small" style="margin-bottom:10px">${errs.map(esc).join("<br>")}</p>` : ""}
+      ${errs.length ? `<ul class="errs small" role="alert">${errs.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>` : `<p class="muted small" style="margin-bottom:10px">Comprobación local de cabecera, identificadores y referencias. La validación completa contra el esquema oficial CycloneDX 1.6 se ejecuta con <code>npm test</code>.</p>`}
       <pre class="json" tabindex="0" aria-label="Vista previa del JSON">${esc(json)}</pre>
+    </div>
+    <div class="section">
+      <h2>Informe</h2>
+      <div class="panel pad">
+        <p class="muted">Resumen legible del inventario, el indicador de preparación, Mosca y el plan con sus estados, para adjuntar a un análisis de riesgos.</p>
+        <div class="row-wrap" style="margin-top:14px">
+          <button class="btn btn-primary" data-act="report-md" ${inv.algorithms.length ? "" : "disabled"}>${ic("file-text", "ico ico-drop")}Descargar Markdown</button>
+          <button class="btn btn-secondary" data-act="report-print" ${inv.algorithms.length ? "" : "disabled"}>${ic("printer", "ico ico-pop")}Imprimir o guardar PDF</button>
+        </div>
+      </div>
     </div>
     <div class="section">
       <h2>Privacidad y datos</h2>
@@ -471,6 +539,25 @@ function renderExport() {
     </div>
   </div>`;
   icons(el);
+}
+
+// Conversión mínima del Markdown del informe (títulos, listas, tablas, negrita, código) a HTML escapado.
+function mdToHtml(md) {
+  const inline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/_(Sin datos\.)_/g, "<i>$1</i>").replace(/`([^`]+)`/g, "<code>$1</code>");
+  const cells = (l) => l.slice(2, -2).split(/ (?<!\\)\| /).map((c) => c.replace(/\\\|/g, "|"));
+  const out = [];
+  const lines = md.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (l.startsWith("# ")) out.push(`<h1>${inline(l.slice(2))}</h1>`);
+    else if (l.startsWith("## ")) out.push(`<h2>${inline(l.slice(3))}</h2>`);
+    else if (l.startsWith("- ")) { const items = []; while (lines[i]?.startsWith("- ")) items.push(`<li>${inline(lines[i++].slice(2))}</li>`); i--; out.push(`<ul>${items.join("")}</ul>`); }
+    else if (l.startsWith("| ")) {
+      const rows = []; while (lines[i]?.startsWith("| ")) rows.push(lines[i++]); i--;
+      out.push(`<table><thead><tr>${cells(rows[0]).map((c) => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody>${rows.slice(2).map((r) => `<tr>${cells(r).map((c) => `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+    } else if (l.trim()) out.push(`<p>${inline(l)}</p>`);
+  }
+  return out.join("\n");
 }
 
 /* ---------- Eventos ---------- */
@@ -521,6 +608,20 @@ document.addEventListener("click", async (e) => {
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     toast("CBOM descargado.", "download");
+  } else if (act === "report-md" || act === "report-print") {
+    const md = buildMarkdown({ inv, plan: plan(), assets: assetsResolved(), z: state.z, statuses: state.statuses });
+    if (act === "report-md") {
+      const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `informe-pqc-${new Date().toISOString().slice(0, 10)}.md`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      toast("Informe descargado.", "download");
+    } else {
+      $("#print-report").innerHTML = mdToHtml(md);
+      window.print();
+    }
   } else if (act === "copy") {
     try { await navigator.clipboard.writeText(JSON.stringify(lastBom, null, 2)); toast("JSON copiado al portapapeles."); }
     catch { toast("El navegador no permite copiar aquí. Usa Descargar.", "circle-alert"); }
@@ -542,7 +643,8 @@ document.addEventListener("input", (e) => {
     renderInventory();
     const n = $("#q"); n.focus(); n.setSelectionRange(pos, pos);
   } else if (t.id === "z-range" || t.id === "z-num") {
-    const v = Math.max(1, Math.min(50, Number(t.value) || 1));
+    if (t.id === "z-num" && t.value === "") return; // deja vaciar el campo mientras se escribe
+    const v = Math.max(1, Math.min(50, Math.round(Number(t.value)) || 1));
     state.z = v; state.zPreset = Z_PRESETS.find((p) => p.z === v)?.id || null; save();
     clearTimeout(t._r);
     if (t.id === "z-range") { renderMosca(); $("#z-range").focus(); }
@@ -550,7 +652,7 @@ document.addEventListener("input", (e) => {
   } else if (t.dataset.f) {
     const a = state.assets.find((x) => x.id === t.closest("[data-asset]").dataset.asset);
     if (t.dataset.f === "name") { a.name = t.value; save(); return; }
-    a[t.dataset.f] = Math.max(0, Number(t.value) || 0);
+    a[t.dataset.f] = Math.min(Math.max(0, Number(t.value) || 0), t.dataset.f === "x" ? 100 : 50);
     save();
     clearTimeout(t._r);
     t._r = setTimeout(() => {
@@ -560,6 +662,20 @@ document.addEventListener("input", (e) => {
       n?.focus();
     }, 400);
   }
+});
+
+// Teclado en las pestañas: flechas, Inicio y Fin (patrón ARIA de pestañas con activación automática).
+document.addEventListener("keydown", (e) => {
+  const tab = e.target.closest?.(".tab[data-view]");
+  if (!tab) return;
+  const list = $$(".tab", tab.parentElement);
+  const i = list.indexOf(tab);
+  const next = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: list.length - 1 }[e.key];
+  if (next === undefined) return;
+  e.preventDefault();
+  const t = list[(next + list.length) % list.length];
+  show(t.dataset.view, false);
+  t.focus();
 });
 
 document.addEventListener("change", (e) => {
@@ -586,4 +702,4 @@ $("#theme").addEventListener("click", () => { state.theme = state.theme === "dar
 recompute();
 applyTheme();
 icons();
-show(state.view || "inventario", true);
+show(VIEWS.includes(state.view) ? state.view : "inventario", true);

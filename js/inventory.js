@@ -4,8 +4,8 @@ import { classify } from "./classify.js";
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
 export function certKeyName(c) {
-  if (c.keyFamily === "RSA") return `RSA-${c.keySize}`;
-  if (c.keyFamily === "EC") return `ECDSA-${c.curve}`;
+  if (c.keyFamily === "RSA") return c.keySize ? `RSA-${c.keySize}` : "RSA";
+  if (c.keyFamily === "EC") return /^(P-\d{3}|secp256k1)$/.test(c.curve || "") ? `ECDSA-${c.curve}` : "ECDSA";
   return c.keyAlg;
 }
 

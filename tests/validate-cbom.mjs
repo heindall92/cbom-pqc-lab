@@ -1,5 +1,5 @@
 // Valida el CBOM generado con las muestras contra el esquema oficial CycloneDX 1.6.
-// Uso: npm i --no-save ajv@8 ajv-formats && node tests/validate-cbom.mjs
+// Uso: npm i --no-save ajv@8 ajv-formats && node tests/validate-cbom.mjs [cbom-extra.json ...]
 import { readFileSync } from "node:fs";
 import { webcrypto } from "node:crypto";
 import Ajv from "ajv";
@@ -34,5 +34,12 @@ const cases = [[30, 6, 10, true], [5, 5, 10, false], [5, 6, 10, true], [0, 3, 10
 for (const [x, y, z, exp] of cases) if (evaluate(x, y, z).critical !== exp) { console.error("Mosca", x, y, z); ok = false; }
 if (evaluate(5, 4, 10).level !== "warning") { console.error("nivel límite"); ok = false; }
 
+// CBOM adicionales (p. ej. el descargado en las pruebas e2e): node tests/validate-cbom.mjs fichero.json
+for (const f of process.argv.slice(2)) {
+  const other = JSON.parse(readFileSync(f, "utf8"));
+  const v = validate(other) && !checkCbom(other).length;
+  if (!v) { console.error(f, validate.errors, checkCbom(other)); ok = false; }
+  console.log(`${f}: ${other.components.length} componentes, esquema 1.6 ${v ? "VÁLIDO" : "con ERRORES"}`);
+}
 console.log(`${bom.components.length} componentes, ${plan.length} acciones del plan. Esquema 1.6: ${ok ? "VÁLIDO" : "ERRORES"}`);
 process.exit(ok ? 0 : 1);

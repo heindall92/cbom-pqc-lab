@@ -1,6 +1,7 @@
 // Lector DER/ASN.1 mínimo para certificados X.509. Solo lectura, sin dependencias.
 
 function readTLV(buf, pos) {
+  if (pos + 2 > buf.length) throw new Error("Estructura ASN.1 truncada");
   const tag = buf[pos];
   let len = buf[pos + 1];
   let hdr = 2;
@@ -111,15 +112,68 @@ export function pemBlocks(text) {
   return out;
 }
 
+const hex = (u) => [...u].map((b) => b.toString(16).padStart(2, "0")).join(":");
+const EKU = { "1.3.6.1.5.5.7.3.1": "serverAuth", "1.3.6.1.5.5.7.3.2": "clientAuth", "1.3.6.1.5.5.7.3.3": "codeSigning", "1.3.6.1.5.5.7.3.4": "emailProtection", "1.3.6.1.5.5.7.3.8": "timeStamping", "1.3.6.1.5.5.7.3.9": "OCSPSigning" };
+const KU = ["digitalSignature", "nonRepudiation", "keyEncipherment", "dataEncipherment", "keyAgreement", "keyCertSign", "cRLSign", "encipherOnly", "decipherOnly"];
+
+// Extensiones X.509 v3 más relevantes para inventario: CA, usos, SAN e identificadores de clave.
+function extensions(buf, node) {
+  const ext = { ca: null, pathLen: null, keyUsage: [], extKeyUsage: [], san: [], ski: null, aki: null, other: [] };
+  const seq = children(buf, node)[0];
+  if (!seq) return ext;
+  for (const e of children(buf, seq)) {
+    const parts = children(buf, e);
+    const id = oid(buf, parts[0]);
+    const val = parts[parts.length - 1];
+    const inner = buf.subarray(val.start, val.end);
+    try {
+      if (id === "2.5.29.19") {
+        const bc = readTLV(inner, 0);
+        ext.ca = false;
+        for (const c of children(inner, bc)) {
+          if (c.tag === 0x01) ext.ca = inner[c.start] !== 0;
+          else if (c.tag === 0x02) ext.pathLen = inner[c.start];
+        }
+      } else if (id === "2.5.29.15") {
+        const bs = readTLV(inner, 0);
+        const bits = inner.subarray(bs.start + 1, bs.end);
+        KU.forEach((k, i) => { if (bits[i >> 3] & (0x80 >> (i & 7))) ext.keyUsage.push(k); });
+      } else if (id === "2.5.29.37") {
+        for (const c of children(inner, readTLV(inner, 0))) { const o = oid(inner, c); ext.extKeyUsage.push(EKU[o] || o); }
+      } else if (id === "2.5.29.17") {
+        for (const c of children(inner, readTLV(inner, 0))) {
+          if (c.tag === 0x82) ext.san.push(new TextDecoder().decode(inner.subarray(c.start, c.end)));
+          else if (c.tag === 0x87) ext.san.push(c.len === 4 ? [...inner.subarray(c.start, c.end)].join(".") : "IPv6");
+        }
+      } else if (id === "2.5.29.14") {
+        const os = readTLV(inner, 0); ext.ski = hex(inner.subarray(os.start, os.end));
+      } else if (id === "2.5.29.35") {
+        const k = children(inner, readTLV(inner, 0)).find((c) => c.tag === 0x80);
+        if (k) ext.aki = hex(inner.subarray(k.start, k.end));
+      } else ext.other.push(id);
+    } catch { ext.other.push(id); }
+  }
+  return ext;
+}
+
 export function parseCertificate(der) {
   const buf = der instanceof Uint8Array ? der : new Uint8Array(der);
+  try { return parseCertificateStrict(buf); }
+  catch (e) {
+    throw new Error(/ASN\.1|DER/.test(e.message) ? e.message : "No es un certificado X.509 válido (estructura inesperada)");
+  }
+}
+
+function parseCertificateStrict(buf) {
   const cert = readTLV(buf, 0);
   if (cert.tag !== 0x30) throw new Error("No es un certificado DER");
   const [tbs, sigAlg] = children(buf, cert);
+  if (!tbs || !sigAlg || tbs.tag !== 0x30) throw new Error("No es un certificado DER");
   const t = children(buf, tbs);
+  if (t.length < 6) throw new Error("No es un certificado DER");
   let i = 0;
   if (t[0].tag === 0xa0) i++; // versión
-  i++; // número de serie
+  const serial = hex(buf.subarray(t[i].start, t[i].end)); i++;
   i++; // algoritmo de firma (repetido)
   const issuer = name(buf, t[i++]);
   const [nb, na] = children(buf, t[i++]);
@@ -138,18 +192,23 @@ export function parseCertificate(der) {
     let n = mod.len;
     let p = mod.start;
     while (n > 0 && bits[p] === 0) { n--; p++; }
-    keySize = n * 8 - Math.clz32(bits[p]) + 24;
+    keySize = n > 0 ? n * 8 - Math.clz32(bits[p]) + 24 : null;
   } else if (keyInfo.family === "EC" && ka[1] && ka[1].tag === 0x06) {
     const c = oid(buf, ka[1]);
     curve = CURVES[c] || c;
     keySize = { "P-256": 256, "P-384": 384, "P-521": 521, secp256k1: 256 }[curve] || null;
+  } else if (keyInfo.family === "EC") {
+    curve = "parámetros explícitos";
   } else if (keyInfo.family === "EdDSA") {
     keySize = keyInfo.name === "Ed25519" ? 256 : 456;
   }
   const sigOid = oid(buf, children(buf, sigAlg)[0]);
   const sigInfo = OIDS[sigOid] || { name: sigOid, family: "desconocido" };
-  const selfSigned = issuer === subject;
+  const extNode = t.slice(i).find((n) => n.tag === 0xa3);
+  const ext = extNode ? extensions(buf, extNode) : { ca: null, pathLen: null, keyUsage: [], extKeyUsage: [], san: [], ski: null, aki: null, other: [] };
+  const selfSigned = issuer === subject && (!ext.aki || !ext.ski || ext.aki === ext.ski);
   return {
+    serial, ext,
     subject, issuer, notBefore: time(buf, nb), notAfter: time(buf, na),
     keyOid, keyAlg: keyInfo.name, keyFamily: keyInfo.family, keySize, curve,
     sigOid, sigAlg: sigInfo.name, sigFamily: sigInfo.family, selfSigned,

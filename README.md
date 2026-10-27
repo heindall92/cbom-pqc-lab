@@ -18,6 +18,7 @@ Herramienta local, en el navegador, para inventariar la criptografía de una ent
 4. **Exportación CycloneDX 1.6.** Componentes `cryptographic-asset` con `cryptoProperties` (algoritmos, certificados, claves públicas y protocolos), dependencias entre ellos, y clasificación y prioridad como propiedades. La estructura se valida contra el esquema oficial (ver *Pruebas*).
 5. **Datos de ejemplo** de una entidad ficticia ("Banco Ficticio Atlántida S.A.", dominios `.example`) en `samples/`, cargables con un clic.
 6. Estado guardado solo en `localStorage`, con opción de restablecer todo. Tema claro y oscuro.
+7. **Indicador de preparación PQC** (0-100), **sensibilidad de Mosca** por escenario de Z, **informe** en Markdown o imprimible a PDF, e **importación de un CBOM** CycloneDX para reeditarlo (desde v0.2).
 
 ## Cómo ejecutarlo
 
@@ -53,11 +54,16 @@ nmap --script ssl-enum-ciphers -p 443 host
 ## Pruebas
 
 ```sh
-npm install
-npm test
+npm install --no-save ajv@8 ajv-formats playwright
+npm test                       # pruebas unitarias + validación con el esquema CycloneDX 1.6
+python3 serve.py 8765 --no-browser &
+npx playwright install chromium
+npm run test:e2e               # navegador headless: escritorio y 390 px, claro y oscuro
 ```
 
-`tests/validate-cbom.mjs` analiza las muestras, genera el CBOM y lo valida con el esquema oficial CycloneDX 1.6 (`tests/schema/`), además de comprobar la lógica de Mosca.
+- `tests/unit.mjs`: clasificación, analizadores con entradas malformadas (PEM basura, DER aleatorio, ficheros vacíos, `include`, comentarios, `Match`, selectores genéricos), extensiones X.509, indicador y Mosca. Incluye las regresiones de los fallos corregidos en v0.2.
+- `tests/validate-cbom.mjs`: genera el CBOM de las muestras y lo valida con el esquema oficial CycloneDX 1.6 (`tests/schema/`). Admite ficheros extra: `node tests/validate-cbom.mjs cbom.json`.
+- `tests/e2e.mjs`: todas las pestañas, soltar/elegir/pegar ficheros, casos límite de Mosca, alta y baja de activos, persistencia y `localStorage` corrupto, exportación, informe, teclado, ARIA, errores de consola y desbordamiento horizontal. Con `SHOTS=carpeta` guarda capturas.
 
 ## Estructura
 
@@ -65,21 +71,54 @@ npm test
 index.html        interfaz
 css/app.css       estilos
 js/x509.js        lector DER/ASN.1 de certificados
-js/parsers.js     nginx, sshd, openssl.cnf, s_client, nmap
+js/parsers.js     nginx, sshd, openssl.cnf, s_client, nmap, openssl ciphers -v, CBOM JSON
 js/classify.js    clasificación cuántica de algoritmos
 js/mosca.js       Teorema de Mosca
 js/plan.js        plan de transición
 js/cbom.js        exportación CycloneDX 1.6
+js/report.js      indicador de preparación, cadena X.509 e informe Markdown
 samples/          datos de ejemplo ficticios
 tools/            regeneración de js/samples.js
 ```
 
-## Limitaciones conocidas (v0.1)
+## Limitaciones conocidas (v0.2)
 
 - Analiza texto y ficheros, no endpoints en vivo.
-- No interpreta `include` de nginx ni cadenas de cifrado OpenSSL abstractas como `HIGH:!aNULL` (se ignoran los selectores genéricos).
-- La clasificación de extensiones X.509, cadenas de confianza y certificados compuestos PQC aún no está implementada.
+- No sigue `include` de nginx ni `Include` de sshd (avisa y pide cargar esos ficheros). No expande selectores genéricos de OpenSSL como `HIGH:!aNULL`: avisa y propone pegar la salida de `openssl ciphers -v`, que sí se analiza.
+- La cadena de certificados se reconstruye por nombre e identificadores de clave entre los ficheros cargados; **no se verifican firmas** ni revocación. Los certificados compuestos PQC aún no se reconocen.
+- El indicador de preparación PQC es una ponderación propia y visible de esta herramienta, no una métrica estándar.
+- Al importar un CBOM se reclasifican sus algoritmos; certificados y protocolos no se reconstruyen.
 - Los valores de X, Y y Z son ilustrativos; la prioridad del plan es orientativa y no constituye un dictamen de cumplimiento normativo.
+
+## Cambios
+
+### v0.2
+
+Corregido:
+- nginx y sshd: los comentarios al final de línea (`... # RC4`) se analizaban como configuración.
+- nginx: valores entre comillas en `ssl_ecdh_curve`, grupos duplicados y aviso de TLS 1.0 en falso positivo.
+- sshd: `-lista` (eliminar de los valores por defecto) se inventariaba como algoritmo habilitado; no se admitía la forma `Clave=valor`; los bloques `Match` se mezclaban con la configuración global.
+- openssl.cnf: `DEFAULT@SECLEVEL=2` y otros selectores aparecían como algoritmos «sin clasificar».
+- Certificados malformados o DER aleatorio mostraban errores internos de JavaScript; un certificado ilegible impedía leer el resto del fichero.
+- Ficheros vacíos se marcaban como «formato no reconocido» sin explicación.
+- Mosca: aceptaba años negativos y mostraba decimales en coma flotante (`0.30000000000000004`); el campo Z no se podía vaciar al escribir.
+- `localStorage` corrupto o con forma inesperada bloqueaba la aplicación al cargar.
+- Pestañas sin `aria-controls`/`tabpanel` ni navegación con flechas, Inicio y Fin.
+- Clasificación: faltaban esquemas de firma TLS 1.3 (`rsa_pss_rsae_sha256`, `ecdsa_secp256r1_sha256`…), `sha256WithRSAEncryption`, `AES256`, `DES`, ECDSA secp256k1 y claves RSA/EC con parámetros no estándar.
+- Fechas de validez partidas en móvil; contraste de rojo y verde en tema claro elevado a ≥ 7:1; animaciones de entrada acortadas.
+
+Añadido:
+- Extensiones X.509 (CA y pathLen, usos de clave, EKU, SAN, SKI/AKI), número de serie, estado de cadena entre los certificados cargados y avisos de caducidad, SHA-1, RSA < 2048 y ausencia de SAN.
+- Avisos de `include`/`Include`, `Match`, listas `+`/`^` de OpenSSH y selectores genéricos de OpenSSL; análisis de la salida de `openssl ciphers -v`.
+- Importación de un CBOM CycloneDX (JSON) para reeditarlo.
+- Indicador de preparación PQC con su ponderación a la vista.
+- Tabla de sensibilidad de Mosca por escenario de Z.
+- Informe en Markdown e impresión a PDF.
+- Pruebas unitarias y de extremo a extremo (Playwright).
+
+### v0.1
+
+Versión inicial: generador de CBOM, calculadora de Mosca, plan de transición PQC y exportación CycloneDX 1.6.
 
 ## Licencias de terceros
 

@@ -16,13 +16,13 @@
     <div class="top-inner">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true"><i data-lucide="shield-half"></i></span>
-        <span>CBOM &amp; PQC Lab<small>para Banca · v0.1</small></span>
+        <span>CBOM &amp; PQC Lab<small>para Banca · v0.2</small></span>
       </div>
       <nav class="tabs" role="tablist" aria-label="Secciones">
-        <button class="tab" role="tab" data-view="inventario"><i data-lucide="scan-search" class="ico ico-pop"></i>Inventario</button>
-        <button class="tab" role="tab" data-view="mosca"><i data-lucide="hourglass" class="ico ico-tilt"></i>Mosca</button>
-        <button class="tab" role="tab" data-view="plan"><i data-lucide="route" class="ico ico-nudge"></i>Plan PQC</button>
-        <button class="tab" role="tab" data-view="exportar"><i data-lucide="file-json" class="ico ico-lift"></i>Exportar</button>
+        <button class="tab" role="tab" data-view="inventario" aria-controls="view-inventario"><i data-lucide="scan-search" class="ico ico-pop"></i>Inventario</button>
+        <button class="tab" role="tab" data-view="mosca" aria-controls="view-mosca"><i data-lucide="hourglass" class="ico ico-tilt"></i>Mosca</button>
+        <button class="tab" role="tab" data-view="plan" aria-controls="view-plan"><i data-lucide="route" class="ico ico-nudge"></i>Plan PQC</button>
+        <button class="tab" role="tab" data-view="exportar" aria-controls="view-exportar"><i data-lucide="file-json" class="ico ico-lift"></i>Exportar</button>
       </nav>
       <div class="top-actions">
         <span class="pill-local" title="Nada sale de este navegador"><i data-lucide="lock-keyhole"></i><span class="txt">100 % local</span></span>
@@ -32,21 +32,22 @@
   </header>
 
   <main>
-    <section class="view" id="view-inventario" aria-labelledby="h-inv"></section>
-    <section class="view" id="view-mosca" aria-labelledby="h-mosca"></section>
-    <section class="view" id="view-plan" aria-labelledby="h-plan"></section>
-    <section class="view" id="view-exportar" aria-labelledby="h-exp"></section>
+    <section class="view" id="view-inventario" role="tabpanel" aria-labelledby="h-inv" tabindex="-1"></section>
+    <section class="view" id="view-mosca" role="tabpanel" aria-labelledby="h-mosca" tabindex="-1"></section>
+    <section class="view" id="view-plan" role="tabpanel" aria-labelledby="h-plan" tabindex="-1"></section>
+    <section class="view" id="view-exportar" role="tabpanel" aria-labelledby="h-exp" tabindex="-1"></section>
   </main>
 
   <nav class="tabbar" role="tablist" aria-label="Secciones">
-    <button class="tab" role="tab" data-view="inventario"><i data-lucide="scan-search"></i>Inventario</button>
-    <button class="tab" role="tab" data-view="mosca"><i data-lucide="hourglass"></i>Mosca</button>
-    <button class="tab" role="tab" data-view="plan"><i data-lucide="route"></i>Plan</button>
-    <button class="tab" role="tab" data-view="exportar"><i data-lucide="file-json"></i>Exportar</button>
+    <button class="tab" role="tab" data-view="inventario" aria-controls="view-inventario"><i data-lucide="scan-search"></i>Inventario</button>
+    <button class="tab" role="tab" data-view="mosca" aria-controls="view-mosca"><i data-lucide="hourglass"></i>Mosca</button>
+    <button class="tab" role="tab" data-view="plan" aria-controls="view-plan"><i data-lucide="route"></i>Plan</button>
+    <button class="tab" role="tab" data-view="exportar" aria-controls="view-exportar"><i data-lucide="file-json"></i>Exportar</button>
   </nav>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-  <input type="file" id="file" multiple hidden accept=".pem,.crt,.cer,.der,.conf,.cnf,.txt,.cfg,text/plain">
+  <div id="print-report" class="print-report" aria-hidden="true"></div>
+  <input type="file" id="file" multiple hidden accept=".pem,.crt,.cer,.der,.conf,.cnf,.txt,.cfg,.json,text/plain,application/json">
 
   <script src="vendor/lucide.min.js"></script>
   <script type="module" src="js/app.js"></script>

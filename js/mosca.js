@@ -15,14 +15,25 @@ export const ASSET_PRESETS = [
   { id: "log", name: "Log transaccional", x: 10, y: 4, kind: "conf", hint: "Registros de operaciones conservados por obligación regulatoria." },
 ];
 
+export const MAX_YEARS = 200;
+
+// Umbral de Z por debajo del cual el activo pasa a deuda crítica, y estado en cada escenario.
+export function sensitivity(x, y) {
+  const ev = evaluate(x, y, 0);
+  return { threshold: ev.sum, byPreset: Z_PRESETS.map((p) => ({ ...p, ev: evaluate(x, y, p.z) })) };
+}
+
 export function evaluate(x, y, z) {
-  const X = Number(x) || 0, Y = Number(y) || 0, Z = Number(z) || 0;
-  const margin = X + Y - Z;
+  // Entradas saneadas: años no negativos, finitos y con 2 decimales como máximo.
+  const n = (v, max) => { const f = Number(v); return Number.isFinite(f) ? Math.round(Math.min(Math.max(f, 0), max) * 100) / 100 : 0; };
+  const X = n(x, MAX_YEARS), Y = n(y, MAX_YEARS), Z = n(z, MAX_YEARS);
+  const r = (v) => Math.round(v * 100) / 100;
+  const margin = r(X + Y - Z);
   let level;
   if (margin > 0) level = "critical";
   else if (margin > -2) level = "warning";
   else level = "ok";
-  return { X, Y, Z, sum: X + Y, margin, critical: margin > 0, level };
+  return { X, Y, Z, sum: r(X + Y), margin, critical: margin > 0, level };
 }
 
 export const LEVELS = {
